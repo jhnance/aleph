@@ -1,0 +1,9 @@
+{
+  "name": "aleph",
+  "version": "0.0.0-pre_alpha.0",
+  "description": "Aleph is a cataloguing and discovery tool for your ecosystem.",
+  "scripts": {},
+  "author": "Joshua Nance",
+  "license": "UNLICENSED",
+  "type": "module"
+}
