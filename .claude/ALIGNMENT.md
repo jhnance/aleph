@@ -4,8 +4,8 @@
 
 Things we need to align on before implementation. Check off as each is resolved.
 
-- [ ] Connections — table design, directionality, version-specific connections
-- [ ] Sub-domain hierarchy — `parent_id` on `domains`, depth limits if any
+- [x] Connections — table design, directionality, version-specific connections
+- [x] Sub-domain hierarchy — `parent_id` on `domains`, depth limits if any
 - [ ] SDK/CLI — publish workflow design, how exports are detected, rename succession UX
 - [ ] Email service — provider decision, transactional email design
 - [ ] Search and discovery — scope, full-text vs structured, UX shape

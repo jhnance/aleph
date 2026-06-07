@@ -1,3 +1,5 @@
+blaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
 ## Tables
 
 ```sql
@@ -56,9 +58,9 @@ CREATE TYPE org_role AS ENUM ('owner', 'admin', 'member', 'viewer');
 
 CREATE TABLE organization_memberships
 (
-    user_id         UUID     NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
-    organization_id UUID     NOT NULL REFERENCES organizations (id) ON DELETE RESTRICT,
-    role            org_role NOT NULL DEFAULT 'member',
+    user_id         UUID        NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+    organization_id UUID        NOT NULL REFERENCES organizations (id) ON DELETE RESTRICT,
+    role            org_role    NOT NULL DEFAULT 'member',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (user_id, organization_id)
@@ -77,17 +79,24 @@ CREATE TABLE domains
 (
     id              UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
     organization_id UUID        NOT NULL REFERENCES organizations (id) ON DELETE RESTRICT,
+    parent_id       UUID,
     name            TEXT        NOT NULL,
     slug            TEXT        NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (organization_id, slug),
     UNIQUE (id, organization_id),
     CHECK (char_length(slug) BETWEEN 1 AND 50),
-    CHECK (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
-)
-    );
+    CHECK (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'),
+    CHECK (parent_id != id),
+    FOREIGN KEY (parent_id, organization_id) REFERENCES domains (id, organization_id) ON DELETE RESTRICT
+);
 
+-- Slug uniqueness is sibling-scoped: unique among root domains within an org,
+-- and unique among children of the same parent within an org.
+-- Two partial indexes because UNIQUE treats NULLs as distinct — a single constraint
+-- cannot express both cases when parent_id is nullable.
+CREATE UNIQUE INDEX idx_domain_slug_root ON domains (organization_id, slug) WHERE parent_id IS NULL;
+CREATE UNIQUE INDEX idx_domain_slug_child ON domains (organization_id, parent_id, slug) WHERE parent_id IS NOT NULL;
 CREATE INDEX idx_domain_organization_id ON domains (organization_id);
 
 -- The base entity for all documented assets. The `type` column is a discriminator
@@ -118,7 +127,7 @@ CREATE INDEX idx_point_domain_id ON points (domain_id);
 CREATE TABLE frontend_frameworks
 (
     id              INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    organization_id UUID        REFERENCES organizations (id) ON DELETE RESTRICT,
+    organization_id UUID REFERENCES organizations (id) ON DELETE RESTRICT,
     name            VARCHAR(50) NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -136,7 +145,7 @@ CREATE INDEX idx_framework_organization_id ON frontend_frameworks (organization_
 CREATE TABLE custom_point_types
 (
     id              UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
-    organization_id UUID        REFERENCES organizations (id) ON DELETE RESTRICT,
+    organization_id UUID REFERENCES organizations (id) ON DELETE RESTRICT,
     name            TEXT        NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -371,6 +380,30 @@ CREATE TABLE point_version_use_cases
 
 CREATE INDEX idx_pvuc_use_case_id ON point_version_use_cases (use_case_id);
 
+CREATE TYPE connection_type AS ENUM ('dependency', 'other');
+
+-- A directed dependency edge between two point versions within the same org.
+-- from_version_id depends on to_version_id.
+-- Immutable once created — connections are established at publish time and never modified.
+-- Cycles are not prevented at the DB layer; the publish workflow enforces acyclicity.
+CREATE TABLE connections
+(
+    id              UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
+    organization_id UUID        NOT NULL,
+    from_version_id UUID        NOT NULL,
+    to_version_id   UUID        NOT NULL,
+    type            connection_type NOT NULL DEFAULT 'dependency',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (from_version_id, to_version_id),
+    CHECK (from_version_id != to_version_id),
+    FOREIGN KEY (from_version_id, organization_id) REFERENCES point_versions (id, organization_id) ON DELETE RESTRICT,
+    FOREIGN KEY (to_version_id, organization_id) REFERENCES point_versions (id, organization_id) ON DELETE RESTRICT
+);
+
+CREATE INDEX idx_connection_from_version ON connections (from_version_id);
+CREATE INDEX idx_connection_to_version ON connections (to_version_id);
+CREATE INDEX idx_connection_organization_id ON connections (organization_id);
+
 -- Shared function for auto-updating updated_at on mutable tables
 CREATE
 OR REPLACE FUNCTION set_updated_at()
@@ -445,7 +478,10 @@ The following invariants are not expressible as simple foreign keys and are enfo
 
 **Framework and custom type organization scoping**
 
-When `frontend_components.framework` or `custom_points.custom_type_id` is set, the application must verify that the referenced row has `organization_id IS NULL` (platform-provided) or `organization_id` matching the point's `organization_id`. The nullable org pattern makes this inexpressible as a single FK constraint.
+When `frontend_components.framework` or
+`custom_points.custom_type_id` is set, the application must verify that the referenced row has
+`organization_id IS NULL` (platform-provided) or `organization_id` matching the point's
+`organization_id`. The nullable org pattern makes this inexpressible as a single FK constraint.
 
 **version_monotonic concurrency**
 
@@ -555,10 +591,12 @@ CREATE TRIGGER trg_check_lineage_export_scoping
 `use_case_lineages` records are never modified after creation. Enforced by trigger:
 
 ```sql
-CREATE OR REPLACE FUNCTION enforce_use_case_lineages_immutable()
+CREATE
+OR REPLACE FUNCTION enforce_use_case_lineages_immutable()
 RETURNS TRIGGER AS $$
 BEGIN
-    RAISE EXCEPTION 'use_case_lineages records are immutable and cannot be updated';
+    RAISE
+EXCEPTION 'use_case_lineages records are immutable and cannot be updated';
 END;
 $$
 LANGUAGE plpgsql;
@@ -574,10 +612,12 @@ CREATE TRIGGER trg_use_case_lineages_immutable
 Associative rows are written once and never updated — remove and re-insert instead. Enforced by trigger:
 
 ```sql
-CREATE OR REPLACE FUNCTION enforce_point_version_use_cases_immutable()
+CREATE
+OR REPLACE FUNCTION enforce_point_version_use_cases_immutable()
 RETURNS TRIGGER AS $$
 BEGIN
-    RAISE EXCEPTION 'point_version_use_cases records are immutable and cannot be updated';
+    RAISE
+EXCEPTION 'point_version_use_cases records are immutable and cannot be updated';
 END;
 $$
 LANGUAGE plpgsql;
@@ -593,10 +633,12 @@ CREATE TRIGGER trg_point_version_use_cases_immutable
 Same as `point_version_use_cases`. Enforced by trigger:
 
 ```sql
-CREATE OR REPLACE FUNCTION enforce_point_version_component_props_immutable()
+CREATE
+OR REPLACE FUNCTION enforce_point_version_component_props_immutable()
 RETURNS TRIGGER AS $$
 BEGIN
-    RAISE EXCEPTION 'point_version_component_props records are immutable and cannot be updated';
+    RAISE
+EXCEPTION 'point_version_component_props records are immutable and cannot be updated';
 END;
 $$
 LANGUAGE plpgsql;
@@ -607,6 +649,29 @@ CREATE TRIGGER trg_point_version_component_props_immutable
     FOR EACH ROW EXECUTE FUNCTION enforce_point_version_component_props_immutable();
 ```
 
+**`connections` immutability**
+
+Connections are written at publish time and never modified. Enforced by trigger:
+
+```sql
+CREATE OR REPLACE FUNCTION enforce_connections_immutable()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'connections records are immutable and cannot be updated';
+END;
+$$
+LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_connections_immutable
+    BEFORE UPDATE
+    ON connections
+    FOR EACH ROW EXECUTE FUNCTION enforce_connections_immutable();
+```
+
+**Connection acyclicity**
+
+The schema does not prevent cycles (A → B → A). The publish workflow must detect and reject any connection that would introduce a cycle, using a recursive CTE graph walk before inserting.
+
 **Rename = new export lineage**
 
 When an export name changes between versions, the SDK/CLI treats this as the end of the old export's lineage and the creation of a new one. The schema does not prevent a client from reusing an existing point_export record with a different name — this invariant is a publishing protocol enforced by tooling, not the DB.
@@ -615,12 +680,22 @@ When an export name changes between versions, the SDK/CLI treats this as the end
 
 ### Magic link flow
 
-1. User submits their email. Server generates a cryptographically random 32-byte token (`crypto.randomBytes(32)`), computes its SHA-256 hash, inserts a row into `auth_codes` with the hash and a short expiry (15 minutes), and emails the plaintext token as a magic link.
-2. User clicks the link. Server hashes the token from the URL, then within a single transaction runs `UPDATE auth_codes SET used_at = now() WHERE code_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING id`. If the update returns a row the code is valid and is now dead; if it returns nothing the code was already used or expired. The atomicity is critical — checking and stamping in separate statements opens a race condition where two requests 200ms apart can both pass the check before either stamps `used_at`.
-3. Server upserts the `users` row for that email (creates it on first sign-in, finds it on return). Issues a signed JWT (HS256) containing `user_id`, `active_organization_id` (null if the user has no org yet), and `exp` (30 days). Writes the JWT as an `HttpOnly` cookie.
-4. Every subsequent request: server verifies the JWT signature. No DB lookup required. The `active_organization_id` from the payload is set as `app.current_org_id` for RLS.
-5. Org switching: server verifies the user is a member of the target org, re-issues the JWT with the updated `active_organization_id`, replaces the cookie.
-6. Logout: delete the cookie client-side. The token remains technically valid until `exp` but the client no longer has it.
+1. User submits their email. Server generates a cryptographically random 32-byte token (
+   `crypto.randomBytes(32)`), computes its SHA-256 hash, inserts a row into
+   `auth_codes` with the hash and a short expiry (15 minutes), and emails the plaintext token as a magic link.
+2. User clicks the link. Server hashes the token from the URL, then within a single transaction runs
+   `UPDATE auth_codes SET used_at = now() WHERE code_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING id`. If the update returns a row the code is valid and is now dead; if it returns nothing the code was already used or expired. The atomicity is critical — checking and stamping in separate statements opens a race condition where two requests 200ms apart can both pass the check before either stamps
+   `used_at`.
+3. Server upserts the
+   `users` row for that email (creates it on first sign-in, finds it on return). Issues a signed JWT (HS256) containing
+   `user_id`, `active_organization_id` (null if the user has no org yet), and
+   `exp` (30 days). Writes the JWT as an `HttpOnly` cookie.
+4. Every subsequent request: server verifies the JWT signature. No DB lookup required. The
+   `active_organization_id` from the payload is set as `app.current_org_id` for RLS.
+5. Org switching: server verifies the user is a member of the target org, re-issues the JWT with the updated
+   `active_organization_id`, replaces the cookie.
+6. Logout: delete the cookie client-side. The token remains technically valid until
+   `exp` but the client no longer has it.
 
 ### JWT payload
 
@@ -634,15 +709,20 @@ When an export name changes between versions, the SDK/CLI treats this as the end
 }
 ```
 
-`sub` (subject), `exp` (expiration), `iat` (issued at), and `jti` (JWT ID) are all standard registered claim names per [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519). Using standard names means JWT libraries parse them automatically and they carry unambiguous meaning to any developer reading the token. `org` is a custom claim. `jti` is included now so that a `revoked_tokens` table can be added later without requiring a new token format.
+`sub` (subject), `exp` (expiration), `iat` (issued at), and
+`jti` (JWT ID) are all standard registered claim names per [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519). Using standard names means JWT libraries parse them automatically and they carry unambiguous meaning to any developer reading the token.
+`org` is a custom claim. `jti` is included now so that a
+`revoked_tokens` table can be added later without requiring a new token format.
 
 ### Hashing: why SHA-256 for auth codes
 
-bcrypt is intentionally slow to resist brute force against low-entropy inputs like passwords. Magic link tokens are 32 random bytes — 2²⁵⁶ possible values. An attacker with the hash and full knowledge of the algorithm still cannot reverse it or brute force it in any practical timeframe. The slowness of bcrypt buys nothing here; SHA-256 via Node's `crypto.createHash('sha256')` is correct.
+bcrypt is intentionally slow to resist brute force against low-entropy inputs like passwords. Magic link tokens are 32 random bytes — 2²⁵⁶ possible values. An attacker with the hash and full knowledge of the algorithm still cannot reverse it or brute force it in any practical timeframe. The slowness of bcrypt buys nothing here; SHA-256 via Node's
+`crypto.createHash('sha256')` is correct.
 
 This follows Kerckhoffs's principle: a system should be secure even if everything except the secret itself is public knowledge. The algorithm being known is irrelevant — the security comes entirely from the entropy of the token.
 
 What would break this:
+
 - A short or guessable token (e.g. a 6-digit numeric OTP has only 1,000,000 possible values — brute forceable without rate limiting)
 - A token derived from predictable inputs (e.g. `hash(userId + timestamp)`)
 
@@ -693,13 +773,14 @@ VALUES ('point-xyz', 'custom', 'cpt-pipeline');
 
 ### Tenant security for custom types
 
-The invariant: an org can read platform-provided types and its own types, and can only create, update, or delete types it owns. Platform types (`organization_id IS NULL`) are read-only for all tenants — only Aleph can seed them.
+The invariant: an org can read platform-provided types and its own types, and can only create, update, or delete types it owns. Platform types (
+`organization_id IS NULL`) are read-only for all tenants — only Aleph can seed them.
 
 ```typescript
 // organizationId always comes from the authenticated session, never from the request body.
 
 async function listCustomPointTypes(sql: Sql, organizationId: string) {
-  return sql`
+    return sql`
     SELECT * FROM custom_point_types
     WHERE organization_id IS NULL
        OR organization_id = ${organizationId}
@@ -708,53 +789,54 @@ async function listCustomPointTypes(sql: Sql, organizationId: string) {
 }
 
 async function createCustomPointType(sql: Sql, organizationId: string, name: string) {
-  const [row] = await sql`
+    const [row] = await sql`
     INSERT INTO custom_point_types (organization_id, name)
     VALUES (${organizationId}, ${name})
     RETURNING id
   `;
-  return row;
+    return row;
 }
 
 async function updateCustomPointType(
-  sql: Sql,
-  id: string,
-  organizationId: string,
-  name: string,
+    sql: Sql,
+    id: string,
+    organizationId: string,
+    name: string,
 ) {
-  const [row] = await sql`
+    const [row] = await sql`
     UPDATE custom_point_types
     SET name = ${name}
     WHERE id = ${id} AND organization_id = ${organizationId}
     RETURNING id
   `;
-  // Returns nothing if the type doesn't exist OR belongs to another org.
-  // Intentionally indistinct — avoids leaking whether the id exists at all.
-  if (!row) throw new ForbiddenError('Custom type not found or not owned by this organization');
+    // Returns nothing if the type doesn't exist OR belongs to another org.
+    // Intentionally indistinct — avoids leaking whether the id exists at all.
+    if (!row) throw new ForbiddenError('Custom type not found or not owned by this organization');
 }
 
 async function deleteCustomPointType(sql: Sql, id: string, organizationId: string) {
-  const [row] = await sql`
+    const [row] = await sql`
     DELETE FROM custom_point_types
     WHERE id = ${id} AND organization_id = ${organizationId}
     RETURNING id
   `;
-  if (!row) throw new ForbiddenError('Custom type not found or not owned by this organization');
+    if (!row) throw new ForbiddenError('Custom type not found or not owned by this organization');
 }
 
 // Called before INSERT INTO custom_points to enforce org-scoping.
 async function assertCustomTypeInScope(sql: Sql, customTypeId: string, organizationId: string) {
-  const [row] = await sql`
+    const [row] = await sql`
     SELECT organization_id FROM custom_point_types WHERE id = ${customTypeId}
   `;
-  if (!row) throw new NotFoundError('Custom type not found');
-  if (row.organization_id !== null && row.organization_id !== organizationId) {
-    throw new ForbiddenError('Custom type does not belong to this organization');
-  }
+    if (!row) throw new NotFoundError('Custom type not found');
+    if (row.organization_id !== null && row.organization_id !== organizationId) {
+        throw new ForbiddenError('Custom type does not belong to this organization');
+    }
 }
 ```
 
-The `WHERE id = $id AND organization_id = $orgId` pattern on update and delete is the key: it collapses existence and ownership into one query. If either condition fails the row is not returned, and a single generic error is raised — no information leakage about whether the id exists under a different tenant.
+The
+`WHERE id = $id AND organization_id = $orgId` pattern on update and delete is the key: it collapses existence and ownership into one query. If either condition fails the row is not returned, and a single generic error is raised — no information leakage about whether the id exists under a different tenant.
 
 ## Known gaps and upgrade paths
 
@@ -806,110 +888,152 @@ Not yet implemented. The semantic question of whether removal should forward-pro
 
 **Row-level security**
 
-The isolation boundary is the organization. RLS enforces that a request can only read and write data belonging to the org identified by `app.current_org_id` in the session context. Four prerequisites must be in place before RLS can be enabled:
+The isolation boundary is the organization. RLS enforces that a request can only read and write data belonging to the org identified by
+`app.current_org_id` in the session context. Four prerequisites must be in place before RLS can be enabled:
 
 1. **User and membership model** — `users`, `organization_memberships`. ✅ Done.
 
-2. **Connection-level context** — At the start of each request, the Fastify `preHandler` calls `sql.reserve()`, begins a transaction, and runs `SET LOCAL app.current_org_id = $1` using the `active_organization_id` from the verified JWT. ✅ Done.
+2. **Connection-level context** — At the start of each request, the Fastify `preHandler` calls
+   `sql.reserve()`, begins a transaction, and runs `SET LOCAL app.current_org_id = $1` using the
+   `active_organization_id` from the verified JWT. ✅ Done.
 
-3. **`organization_id` denormalized onto all downstream tables** — so RLS policies are direct column checks with no multi-hop joins. ✅ Done.
+3. **`organization_id` denormalized onto all downstream tables
+   ** — so RLS policies are direct column checks with no multi-hop joins. ✅ Done.
 
-4. **Service role** — a `BYPASSRLS` role for migrations and seeding, separate from the application role. See below.
+4. **Service role** — a
+   `BYPASSRLS` role for migrations and seeding, separate from the application role. See below.
 
 Once all four are in place, enable RLS on each tenant-scoped table:
 
 ```sql
 ALTER TABLE points ENABLE ROW LEVEL SECURITY;
-ALTER TABLE points FORCE ROW LEVEL SECURITY; -- owner also subject to policies
+ALTER TABLE points FORCE ROW LEVEL SECURITY;
+-- owner also subject to policies
 -- repeat for all tenant-scoped tables
 ```
 
 The policy shape for tables with non-nullable `organization_id`:
 
 ```sql
-CREATE POLICY tenant_isolation ON points
+CREATE
+POLICY tenant_isolation ON points
     USING (organization_id = current_setting('app.current_org_id', true)::uuid)
     WITH CHECK (organization_id = current_setting('app.current_org_id', true)::uuid);
 ```
 
-The `true` argument to `current_setting` returns NULL instead of raising an error when the variable is not set — which causes the policy to deny all access, a safe default.
+The `true` argument to
+`current_setting` returns NULL instead of raising an error when the variable is not set — which causes the policy to deny all access, a safe default.
 
 The policy shape for tables with nullable `organization_id` (platform-provided data):
 
 ```sql
-CREATE POLICY tenant_isolation ON frontend_frameworks
+CREATE
+POLICY tenant_isolation ON frontend_frameworks
     USING (organization_id IS NULL OR organization_id = current_setting('app.current_org_id', true)::uuid)
     WITH CHECK (organization_id = current_setting('app.current_org_id', true)::uuid);
 ```
 
-`USING` (read) allows both platform and org rows. `WITH CHECK` (write) restricts writes to org-owned rows only — platform rows have `organization_id IS NULL`, which can never match a real org UUID.
+`USING` (read) allows both platform and org rows.
+`WITH CHECK` (write) restricts writes to org-owned rows only — platform rows have
+`organization_id IS NULL`, which can never match a real org UUID.
 
 **Service role**
 
 Migrations, seeding, and admin operations must bypass RLS. This is handled by two Postgres roles:
 
 - `aleph_app` — used by the Fastify process; RLS enforced via policies
-- `aleph_service` — used by migrations and seeding only; granted `BYPASSRLS`; never used by the web application process
+- `aleph_service` — used by migrations and seeding only; granted
+  `BYPASSRLS`; never used by the web application process
 
 ```sql
 CREATE ROLE aleph_app NOLOGIN;
 CREATE ROLE aleph_service BYPASSRLS NOLOGIN;
 
 -- Grant schema access
-GRANT USAGE ON SCHEMA public TO aleph_app;
-GRANT USAGE ON SCHEMA public TO aleph_service;
+GRANT
+USAGE
+ON
+SCHEMA
+public TO aleph_app;
+GRANT USAGE ON SCHEMA
+public TO aleph_service;
 
 -- Application role: DML only
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO aleph_app;
+GRANT
+SELECT,
+INSERT
+,
+UPDATE,
+DELETE
+ON ALL TABLES IN SCHEMA public TO aleph_app;
 
 -- Service role: full access for migrations and seeding
-GRANT ALL ON ALL TABLES IN SCHEMA public TO aleph_service;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO aleph_service;
+GRANT
+ALL
+ON ALL TABLES IN SCHEMA public TO aleph_service;
+GRANT ALL
+ON ALL SEQUENCES IN SCHEMA public TO aleph_service;
 
 -- Database users with login credentials (passwords via env vars)
-CREATE USER aleph_app_user WITH PASSWORD '...' IN ROLE aleph_app;
-CREATE USER aleph_service_user WITH PASSWORD '...' IN ROLE aleph_service;
+CREATE
+USER aleph_app_user WITH PASSWORD '...' IN ROLE aleph_app;
+CREATE
+USER aleph_service_user WITH PASSWORD '...' IN ROLE aleph_service;
 ```
 
-The application's postgres.js instance connects as `aleph_app_user`. The migration runner connects as `aleph_service_user` via a separate connection string. These must never be swapped.
+The application's postgres.js instance connects as
+`aleph_app_user`. The migration runner connects as
+`aleph_service_user` via a separate connection string. These must never be swapped.
 
 **`organization_id` propagation to downstream tables**
 
-`organization_id` currently lives on `organizations`, `domains`, and `points`. Writing RLS policies on downstream tables without it would require multi-hop joins back to `points` on every row evaluation — expensive and error-prone.
+`organization_id` currently lives on `organizations`, `domains`, and
+`points`. Writing RLS policies on downstream tables without it would require multi-hop joins back to
+`points` on every row evaluation — expensive and error-prone.
 
-The pattern is uniform across all ten affected tables: add `organization_id UUID NOT NULL`, add `UNIQUE (id, organization_id)` where the table is itself a compound FK target, and replace (or supplement) the nearest upstream FK with a compound FK that includes `organization_id`. `points` now has `UNIQUE (id, organization_id)` as the anchor.
+The pattern is uniform across all ten affected tables: add `organization_id UUID NOT NULL`, add
+`UNIQUE (id, organization_id)` where the table is itself a compound FK target, and replace (or supplement) the nearest upstream FK with a compound FK that includes
+`organization_id`. `points` now has `UNIQUE (id, organization_id)` as the anchor.
 
 Tables and their compound FK source:
 
-| Table | Compound FK target |
-|---|---|
-| `point_versions` | `points (id, organization_id)` |
-| `point_exports` | `points (id, organization_id)` |
-| `use_case_lineages` | `points (id, organization_id)` |
-| `use_cases` | `use_case_lineages (id, organization_id)` |
-| `frontend_components` | `points (id, organization_id)` |
-| `custom_points` | `points (id, organization_id)` |
-| `component_props` | `frontend_components (point_id, organization_id)` |
-| `point_version_exports` | `point_versions (id, organization_id)` |
-| `point_version_use_cases` | `point_versions (id, organization_id)` |
-| `point_version_component_props` | `point_versions (id, organization_id)` |
+| Table                           | Compound FK target                                |
+|---------------------------------|---------------------------------------------------|
+| `point_versions`                | `points (id, organization_id)`                    |
+| `point_exports`                 | `points (id, organization_id)`                    |
+| `use_case_lineages`             | `points (id, organization_id)`                    |
+| `use_cases`                     | `use_case_lineages (id, organization_id)`         |
+| `frontend_components`           | `points (id, organization_id)`                    |
+| `custom_points`                 | `points (id, organization_id)`                    |
+| `component_props`               | `frontend_components (point_id, organization_id)` |
+| `point_version_exports`         | `point_versions (id, organization_id)`            |
+| `point_version_use_cases`       | `point_versions (id, organization_id)`            |
+| `point_version_component_props` | `point_versions (id, organization_id)`            |
 
-Tables that are compound FK targets themselves also need `UNIQUE (id, organization_id)`: `point_versions`, `point_exports`, `use_case_lineages`, `use_cases`, `frontend_components`.
+Tables that are compound FK targets themselves also need `UNIQUE (id, organization_id)`:
+`point_versions`, `point_exports`, `use_case_lineages`, `use_cases`, `frontend_components`.
 
 ## References
 
 **Authentication and session management**
 
 - [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) — canonical reference for authentication implementation, including passwordless / token-based methods
-- [OWASP Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) — session token generation, `HttpOnly` cookie requirements, token entropy (minimum 128 bits), and session hijacking mitigations
+- [OWASP Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) — session token generation,
+  `HttpOnly` cookie requirements, token entropy (minimum 128 bits), and session hijacking mitigations
 - [OWASP Forgot Password Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html) — covers URL token patterns that are structurally identical to magic links
 - [NIST SP 800-63B-4](https://csrc.nist.gov/pubs/sp/800/63/b/4/final) — US federal standard on authenticator assurance levels, token entropy requirements, and credential lifecycle management (July 2025, supersedes 800-63B)
 - [FusionAuth: Magic Links — A Guide to Passwordless Authentication](https://fusionauth.io/articles/identity-basics/magic-links) — practical implementation guide from a reputable auth vendor; covers token expiry, single-use enforcement, and security tradeoffs
-- [Security Boulevard: Are Magic Links Secure? A Technical Deep Dive](https://securityboulevard.com/2026/05/are-magic-links-secure-a-technical-deep-dive-into-email-based-authentication/) — covers the race condition attack on `used_at` checks and the 2024 incident where concurrent clicks bypassed single-use enforcement
+- [Security Boulevard: Are Magic Links Secure? A Technical Deep Dive](https://securityboulevard.com/2026/05/are-magic-links-secure-a-technical-deep-dive-into-email-based-authentication/) — covers the race condition attack on
+  `used_at` checks and the 2024 incident where concurrent clicks bypassed single-use enforcement
 
 **RLS and multitenancy with postgres.js**
 
-- [AWS: Multi-tenant data isolation with PostgreSQL Row Level Security](https://aws.amazon.com/blogs/database/multi-tenant-data-isolation-with-postgresql-row-level-security/) — authoritative walkthrough of the `SET LOCAL` + transaction pattern for tenant context; confirms why `SET LOCAL` (not `SET`) is required with connection pools
-- [postgres.js (porsager/postgres)](https://github.com/porsager/postgres) — official postgres.js repo; README documents `sql.reserve()` for holding a dedicated connection across a request lifecycle, and `sql.begin()` for transaction-scoped context
-- [Prisma issue #5128: Supporting session-dependent queries across requests](https://github.com/prisma/prisma/issues/5128) — cross-library confirmation that spanning `SET LOCAL` across a request requires a reserved connection; the problem and solution are not postgres.js-specific
+- [AWS: Multi-tenant data isolation with PostgreSQL Row Level Security](https://aws.amazon.com/blogs/database/multi-tenant-data-isolation-with-postgresql-row-level-security/) — authoritative walkthrough of the
+  `SET LOCAL` + transaction pattern for tenant context; confirms why `SET LOCAL` (not
+  `SET`) is required with connection pools
+- [postgres.js (porsager/postgres)](https://github.com/porsager/postgres) — official postgres.js repo; README documents
+  `sql.reserve()` for holding a dedicated connection across a request lifecycle, and
+  `sql.begin()` for transaction-scoped context
+- [Prisma issue #5128: Supporting session-dependent queries across requests](https://github.com/prisma/prisma/issues/5128) — cross-library confirmation that spanning
+  `SET LOCAL` across a request requires a reserved connection; the problem and solution are not postgres.js-specific
 
