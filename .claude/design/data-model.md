@@ -307,11 +307,10 @@ CREATE TABLE use_case_lineages
     id              UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
     point_id        UUID        NOT NULL,
     organization_id UUID        NOT NULL,
-    export_id       UUID,
+    export_id       UUID,                -- NULL = point-level; non-null = export-scoped
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     FOREIGN KEY (point_id, organization_id) REFERENCES points (id, organization_id) ON DELETE RESTRICT,
     FOREIGN KEY (export_id, point_id) REFERENCES point_exports (id, point_id),
-    UNIQUE (point_id, export_id),
     UNIQUE (id, point_id),
     UNIQUE (id, organization_id)
 );
@@ -490,6 +489,8 @@ All publish transactions must begin with
 `MAX(version_monotonic)` and producing a conflict on the
 `UNIQUE (point_id, version_monotonic)` constraint.
 
+See the open question in `./open-questions.md`.
+
 **use_cases immutability**
 
 Records in
@@ -558,32 +559,43 @@ CREATE TRIGGER trg_point_version_exports_immutable
 
 **Export-scoping rule**
 
-If a point has any version with at least one export, all use case lineages for that point must have a non-null
-`export_id`. This is enforced by a trigger on `use_case_lineages`:
+`use_case_lineages.export_id` is nullable. `NULL` means the use case is point-level (describes the
+point as a whole, not any specific export); non-null means it is scoped to a specific export. Both are
+valid at any time, for any point, regardless of whether the point has declared exports.
+
+The version-level invariant: if a lineage is export-scoped, the referenced export must be present in
+the specific version the use case is being associated with. Enforced by a trigger on
+`point_version_use_cases`:
 
 ```sql
-CREATE
-OR REPLACE FUNCTION check_lineage_export_scoping()
+CREATE OR REPLACE FUNCTION check_version_use_case_export_presence()
 RETURNS TRIGGER AS $$
+DECLARE
+    v_export_id UUID;
 BEGIN
-    IF
-NEW.export_id IS NULL AND EXISTS (
-        SELECT 1
-        FROM point_version_exports pve
-        JOIN point_versions pv ON pv.id = pve.point_version_id
-        WHERE pv.point_id = NEW.point_id
-    ) THEN
-        RAISE EXCEPTION 'use case lineages for points with exports must have a non-null export_id';
-END IF;
-RETURN NEW;
-END;
-$$
-LANGUAGE plpgsql;
+    -- Resolve the export_id of the lineage for the use case being associated
+    SELECT ucl.export_id INTO v_export_id
+    FROM use_cases uc
+    JOIN use_case_lineages ucl ON ucl.id = uc.lineage_id
+    WHERE uc.id = NEW.use_case_id;
 
-CREATE TRIGGER trg_check_lineage_export_scoping
-    BEFORE INSERT
-    ON use_case_lineages
-    FOR EACH ROW EXECUTE FUNCTION check_lineage_export_scoping();
+    -- Point-level use cases (export_id IS NULL) are always allowed
+    IF v_export_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM point_version_exports
+        WHERE point_version_id = NEW.point_version_id
+          AND export_id = v_export_id
+    ) THEN
+        RAISE EXCEPTION
+            'export % is not present in version %', v_export_id, NEW.point_version_id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_check_version_use_case_export_presence
+    BEFORE INSERT ON point_version_use_cases
+    FOR EACH ROW EXECUTE FUNCTION check_version_use_case_export_presence();
 ```
 
 **`use_case_lineages` immutability**
