@@ -1,21 +1,5 @@
 # Alignment
 
-## Pre-flight checklist
-
-Things we need to align on before implementation. Check off as each is resolved.
-
-- [x] Connections — table design, directionality, version-specific connections
-- [x] Sub-domain hierarchy — `parent_id` on `domains`, depth limits if any
-- [ ] SDK/CLI — publish workflow design, how exports are detected, rename succession UX
-- [ ] Email service — provider decision, transactional email design
-- [ ] Search and discovery — scope, full-text vs structured, UX shape
-- [ ] `removeUseCaseFromVersion` — resolve forward-propagation semantics before implementing
-- [ ] Forward-propagation behavior for hotfix releases — resolve before implementing publish workflow
-- [x] RLS — complete prerequisites: downstream `organization_id` denormalization, platform data policies, service role bypass
-- [ ] `organization_memberships` — invite flow (how does a user join an org?)
-
----
-
 ## What we're building
 
 Aleph is a cataloguing and discovery tool for organizational ecosystems. The core problem: large organizations have fragmented ecosystems with no single platform that cleanly organizes each part of the system, surfaces relationships between parts, and serves all stakeholder disciplines.
@@ -30,30 +14,36 @@ No existing tool owns this space cleanly. Internal wikis go stale. Component lib
 
 - Admin reporting/insights dashboard (post-MVP)
 - Additional point types beyond `frontend_component` and the `custom` stub (post-MVP)
-- Domain-level access control — RLS is org-scoped for now; domain-level memberships are a future concern
-- Role-differentiated UI — all roles see the same interface; the admin dashboard is explicitly deferred
+- Domain-level access control — RLS is org-scoped; domain-level memberships are a future concern
+- Role-differentiated UI — all roles see the same interface
+- SDKs beyond TypeScript (Python, Ruby, Java, Rust, C++, etc. are post-MVP)
+- Build system plugins (Vite, webpack, etc.) — deferred; no concrete use case yet
 
 ## Architectural constraints
 
-- TypeScript throughout (ESM modules)
-- Package manager: pnpm
+- TypeScript throughout (ESM modules); package manager: pnpm
 - Frontend: React, Vite, Tailwind CSS — tests: Vitest + React Testing Library
 - Backend: Fastify, postgres.js (Postgres) — tests: Vitest
 - Infra: Docker, Kubernetes
-- Auth: custom magic link / OTP, no third-party auth provider
-- Sessions: JWT-based (HS256, 30-day expiry); payload carries `user_id`, `active_organization_id`, and `jti`; stored in `HttpOnly` cookie; no DB lookup per request
-- Multi-org: users can belong to multiple organizations; active org is stored in the JWT and switchable (Slack-like model — per-session, not per-user)
-- Multi-tenancy: org-level isolation via PostgreSQL RLS (`SET LOCAL app.current_org_id` + `sql.reserve()` pattern); two Postgres roles — `aleph_app` (RLS enforced) and `aleph_service` (BYPASSRLS, migrations/seeding only)
-- Token hashing: SHA-256 for magic link tokens (32 cryptographically random bytes; bcrypt overhead is unnecessary); HS256 for JWT signing
-- Quality bar: production-ready patterns throughout — this is a portfolio project and will be reviewed by prospective employers
+- Search: self-hosted Meilisearch
+- Auth: custom magic link / OTP — no third-party auth provider
+- Sessions: JWT (HS256, 30-day expiry); payload carries `user_id`, `active_organization_id`, `jti`; stored in `HttpOnly` cookie; no DB lookup per request
+- Multi-org: users belong to multiple organizations; active org lives in the JWT, switchable per-session (Slack model)
+- Multi-tenancy: org-level isolation via PostgreSQL RLS (`SET LOCAL app.current_org_id` + `sql.reserve()`); two Postgres roles — `aleph_app` (RLS enforced) and `aleph_service` (BYPASSRLS, migrations/seeding only)
+- Token hashing: SHA-256 for magic link tokens (32 random bytes; bcrypt overhead unnecessary); HS256 for JWT signing
+- SDK/CLI: TypeScript-first; CLI published to npm; GitHub Actions marketplace workflows for golden-path publish flows; other-language SDKs post-MVP
+- Quality bar: production-ready patterns throughout — portfolio project, reviewed by prospective employers
 
 ## Open questions
 
 **`removeUseCaseFromVersion` forward-propagation semantics**
-If a use case is removed from version 1.2, should it be removed from all later versions that inherited it, or only from 1.2? This must be resolved before implementing the operation — the behavior is a breaking change to user-facing semantics if reversed post-launch.
+If a use case is removed from version 1.2, should it propagate forward (removing it from all later versions that inherited it), or only affect 1.2? Must be resolved before implementing — reversing this after launch is a breaking change.
 
-**Forward-propagation behavior for hotfix releases**
-If a hotfix version (e.g. `1.0.1-hotfix.0`) is published after `1.1.0` has already been released, its `version_monotonic` will be higher than `1.1.0`'s. We do not want use case edits from `1.1.0` to propagate into the hotfix. Options: (a) never include hotfix versions in forward-propagation at all, or (b) detect hotfix versions and let users explicitly opt out. Must be resolved before implementing the publish workflow.
+**Forward-propagation for hotfix releases**
+If a hotfix (e.g. `1.0.1-hotfix.0`) is published after `1.1.0` already exists, its `version_monotonic` will exceed `1.1.0`'s. We don't want `1.1.0` edits propagating into the hotfix. Two options: (a) never forward-propagate into hotfix versions, or (b) opt-out per-publish. Must be resolved before implementing the publish workflow.
 
-**Invite flow**
-How does a user join an org? Options: admin sends invite link, admin adds email directly, user creates org on first sign-in. Not designed yet.
+**Invite / org join flow**
+How does a user join an org? Options: admin sends an invite link, admin adds email directly, or user creates an org on first sign-in. Not yet designed.
+
+**Build system plugins**
+Whether to eventually build Vite/webpack/other plugins for deeper SDK integration. Deferred — no concrete use case yet.
