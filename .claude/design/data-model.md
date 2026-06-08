@@ -69,6 +69,7 @@ CREATE INDEX idx_org_membership_organization_id ON organization_memberships (org
 CREATE TYPE point_type AS ENUM ('frontend_component', 'custom');
 CREATE TYPE point_status AS ENUM ('active', 'deprecated', 'archived');
 CREATE TYPE point_version_status AS ENUM ('active', 'deprecated', 'archived');
+CREATE TYPE version_classification AS ENUM ('release', 'prerelease', 'hotfix', 'metadata');
 
 -- A product area with a distinct identity and focus, scoped to an organization.
 -- Domains contain Points. `UNIQUE (id, organization_id)` is required as the
@@ -200,17 +201,24 @@ CREATE TABLE component_props
     FOREIGN KEY (point_id, organization_id) REFERENCES frontend_components (point_id, organization_id) ON DELETE RESTRICT
 );
 
--- A specific release of a point. `version_monotonic` is an application-managed
--- integer providing reliable total ordering within a point's history, used for
--- forward propagation queries where comparing semantic version strings is fragile.
+-- A specific release of a point. Semantic ordering uses the composite key
+-- (version_major, version_minor, version_patch, suffix_rank, version_monotonic),
+-- where suffix_rank is derived from version_classification at query time:
+-- 'metadata' = 0, 'prerelease' = 0, 'release' = 1, 'hotfix' = 2. version_monotonic is the
+-- final tiebreaker — insertion order within the same (major, minor, patch,
+-- classification) bucket.
 CREATE TABLE point_versions
 (
-    id                UUID PRIMARY KEY              DEFAULT gen_random_uuid(),
-    point_id          UUID                 NOT NULL,
-    organization_id   UUID                 NOT NULL,
-    version_semantic  TEXT                 NOT NULL,
-    version_monotonic INTEGER              NOT NULL CHECK (version_monotonic > 0),
-    status            point_version_status NOT NULL DEFAULT 'active',
+    id                     UUID PRIMARY KEY              DEFAULT gen_random_uuid(),
+    point_id               UUID                 NOT NULL,
+    organization_id        UUID                 NOT NULL,
+    version_semantic       TEXT                 NOT NULL,
+    version_monotonic      INTEGER              NOT NULL CHECK (version_monotonic > 0),
+    version_major          INTEGER              NOT NULL,
+    version_minor          INTEGER              NOT NULL,
+    version_patch          INTEGER              NOT NULL,
+    version_classification version_classification NOT NULL DEFAULT 'release',
+    status                 point_version_status NOT NULL DEFAULT 'active',
     created_at        TIMESTAMPTZ          NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ          NOT NULL DEFAULT now(),
     UNIQUE (point_id, version_semantic),
@@ -222,6 +230,7 @@ CREATE TABLE point_versions
 
 CREATE INDEX idx_point_version_point_id ON point_versions (point_id);
 CREATE INDEX idx_point_version_point_id_monotonic ON point_versions (point_id, version_monotonic);
+CREATE INDEX idx_point_version_semantic_order ON point_versions (point_id, version_major DESC, version_minor DESC, version_patch DESC, version_monotonic DESC);
 
 -- Version-level metadata — this is where details live.
 -- `point_id` is carried here to enable compound FKs that enforce both

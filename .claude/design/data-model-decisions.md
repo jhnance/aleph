@@ -72,6 +72,23 @@ The rule "if a point has any version with exports, all its use case lineages mus
 
 ---
 
+## Version classification: explicit enum over semver inference
+
+`point_versions` carries `version_major INTEGER`, `version_minor INTEGER`, `version_patch INTEGER`, and `version_classification ENUM('release', 'prerelease', 'hotfix', 'metadata')` rather than relying on parsing `version_semantic` at query time.
+
+**Why:** Semver's `-` suffix has a precise spec meaning (pre-release, lower precedence than the release) that conflicts with how teams actually use it — hotfixes applied on top of a released version are semantically *higher* than that release, not lower. Inferring intent from the suffix string is not possible. An explicit classification stored at publish time makes the intent unambiguous and keeps forward-propagation queries simple.
+
+**Classification rules enforced by the CLI:**
+- No suffix → `release` (implicit, no flag required)
+- `+` suffix → `metadata` (implicit, no flag required; `+` is build metadata per spec and is never intended for consumption in the same way a release is)
+- `-` suffix → requires `--is-prerelease` or `--is-hotfix`; error if omitted
+
+**Semantic ordering:** Forward propagation uses the composite key `(version_major, version_minor, version_patch, suffix_rank, version_monotonic)`, where `suffix_rank` is derived at query time: `metadata = 0`, `prerelease = 0`, `release = 1`, `hotfix = 2`. `version_monotonic` is the final tiebreaker — insertion order within the same `(major, minor, patch, classification)` bucket. The `--is-hotfix` flag is an explicit opt-in to non-spec ordering; `--is-prerelease` follows the spec. Within a classification bucket, publication order determines precedence — a deliberate simplification communicated to users.
+
+**Why this over org-level configuration:** An org-level setting would create divergent versioning semantics across tenants on the same instance — two orgs interpreting the same version string differently. Per-publish intent keeps the behavior local and explicit.
+
+---
+
 ## version_monotonic concurrency: lock parent point row
 
 Concurrent publishes for the same point are serialized by taking `SELECT ... FOR UPDATE` on the parent `points` row at the start of each publish transaction.
