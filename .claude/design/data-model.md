@@ -218,6 +218,7 @@ CREATE TABLE point_versions
     version_minor          INTEGER              NOT NULL,
     version_patch          INTEGER              NOT NULL,
     version_classification version_classification NOT NULL DEFAULT 'release',
+    predecessor_version_id UUID REFERENCES point_versions (id) ON DELETE RESTRICT,
     status                 point_version_status NOT NULL DEFAULT 'active',
     created_at        TIMESTAMPTZ          NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ          NOT NULL DEFAULT now(),

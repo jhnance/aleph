@@ -27,9 +27,12 @@ No existing tool owns this space cleanly. Internal wikis go stale. Component lib
 - Infra: Docker, Kubernetes
 - Search: self-hosted Meilisearch
 - Auth: custom magic link / OTP — no third-party auth provider
-- Sessions: JWT (HS256, 30-day expiry); payload carries `user_id`, `active_organization_id`, `jti`; stored in `HttpOnly` cookie; no DB lookup per request
+- Sessions: JWT (HS256, 30-day expiry); payload carries `user_id`, `active_organization_id`,
+  `jti`; stored in `HttpOnly` cookie; no DB lookup per request
 - Multi-org: users belong to multiple organizations; active org lives in the JWT, switchable per-session (Slack model)
-- Multi-tenancy: org-level isolation via PostgreSQL RLS (`SET LOCAL app.current_org_id` + `sql.reserve()`); two Postgres roles — `aleph_app` (RLS enforced) and `aleph_service` (BYPASSRLS, migrations/seeding only)
+- Multi-tenancy: org-level isolation via PostgreSQL RLS (`SET LOCAL app.current_org_id` +
+  `sql.reserve()`); two Postgres roles — `aleph_app` (RLS enforced) and
+  `aleph_service` (BYPASSRLS, migrations/seeding only)
 - Token hashing: SHA-256 for magic link tokens (32 random bytes; bcrypt overhead unnecessary); HS256 for JWT signing
 - SDK/CLI: TypeScript-first; CLI published to npm; GitHub Actions marketplace workflows for golden-path publish flows; other-language SDKs post-MVP
 - Quality bar: production-ready patterns throughout — portfolio project, reviewed by prospective employers
@@ -38,9 +41,6 @@ No existing tool owns this space cleanly. Internal wikis go stale. Component lib
 
 **`removeUseCaseFromVersion` forward-propagation semantics**
 If a use case is removed from version 1.2, should it propagate forward (removing it from all later versions that inherited it), or only affect 1.2? Must be resolved before implementing — reversing this after launch is a breaking change.
-
-**Forward-propagation for hotfix releases**
-If a hotfix (e.g. `1.0.1-hotfix.0`) is published after `1.1.0` already exists, its `version_monotonic` will exceed `1.1.0`'s. We don't want `1.1.0` edits propagating into the hotfix. Two options: (a) never forward-propagate into hotfix versions, or (b) opt-out per-publish. Must be resolved before implementing the publish workflow.
 
 **Invite / org join flow**
 How does a user join an org? Options: admin sends an invite link, admin adds email directly, or user creates an org on first sign-in. Not yet designed.

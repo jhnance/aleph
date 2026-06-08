@@ -85,6 +85,8 @@ The rule "if a point has any version with exports, all its use case lineages mus
 
 **Semantic ordering:** Forward propagation uses the composite key `(version_major, version_minor, version_patch, suffix_rank, version_monotonic)`, where `suffix_rank` is derived at query time: `metadata = 0`, `prerelease = 0`, `release = 1`, `hotfix = 2`. `version_monotonic` is the final tiebreaker — insertion order within the same `(major, minor, patch, classification)` bucket. The `--is-hotfix` flag is an explicit opt-in to non-spec ordering; `--is-prerelease` follows the spec. Within a classification bucket, publication order determines precedence — a deliberate simplification communicated to users.
 
+**predecessor_version_id:** The publish handler resolves the semantic predecessor once at publish time and stores it as `predecessor_version_id` on the new `point_versions` row. Forward propagation follows this FK directly rather than rerunning the composite key query. This also handles the edge case where a `prerelease` or `metadata` version is published after the release for the same patch already exists — the composite key query would incorrectly skip over that release (suffix_rank 0 < 1), so the handler short-circuits to it directly before falling through to the normal query. `ON DELETE RESTRICT` on the FK prevents removing a version that another version's propagation history depends on.
+
 **Why this over org-level configuration:** An org-level setting would create divergent versioning semantics across tenants on the same instance — two orgs interpreting the same version string differently. Per-publish intent keeps the behavior local and explicit.
 
 ---
