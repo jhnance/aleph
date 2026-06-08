@@ -1,5 +1,3 @@
-blaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-
 ## Tables
 
 ```sql
@@ -86,7 +84,8 @@ CREATE TABLE domains
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (id, organization_id),
     CHECK (char_length(slug) BETWEEN 1 AND 50),
-    CHECK (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'),
+    CHECK (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+) ,
     CHECK (parent_id != id),
     FOREIGN KEY (parent_id, organization_id) REFERENCES domains (id, organization_id) ON DELETE RESTRICT
 );
@@ -388,14 +387,15 @@ CREATE TYPE connection_type AS ENUM ('dependency', 'other');
 -- Cycles are not prevented at the DB layer; the publish workflow enforces acyclicity.
 CREATE TABLE connections
 (
-    id              UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
-    organization_id UUID        NOT NULL,
-    from_version_id UUID        NOT NULL,
-    to_version_id   UUID        NOT NULL,
+    id              UUID PRIMARY KEY         DEFAULT gen_random_uuid(),
+    organization_id UUID            NOT NULL,
+    from_version_id UUID            NOT NULL,
+    to_version_id   UUID            NOT NULL,
     type            connection_type NOT NULL DEFAULT 'dependency',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
     UNIQUE (from_version_id, to_version_id),
-    CHECK (from_version_id != to_version_id),
+    CHECK (from_version_id != to_version_id
+) ,
     FOREIGN KEY (from_version_id, organization_id) REFERENCES point_versions (id, organization_id) ON DELETE RESTRICT,
     FOREIGN KEY (to_version_id, organization_id) REFERENCES point_versions (id, organization_id) ON DELETE RESTRICT
 );
@@ -654,10 +654,12 @@ CREATE TRIGGER trg_point_version_component_props_immutable
 Connections are written at publish time and never modified. Enforced by trigger:
 
 ```sql
-CREATE OR REPLACE FUNCTION enforce_connections_immutable()
+CREATE
+OR REPLACE FUNCTION enforce_connections_immutable()
 RETURNS TRIGGER AS $$
 BEGIN
-    RAISE EXCEPTION 'connections records are immutable and cannot be updated';
+    RAISE
+EXCEPTION 'connections records are immutable and cannot be updated';
 END;
 $$
 LANGUAGE plpgsql;
