@@ -1,3 +1,49 @@
+---
+status: To Do
+---
+
 # Detecting Use Cases
 
-The CLI (or SDK) detects use cases defined in the codebase — likely via annotations, doc comments, or a co-located config file — and surfaces them during publish. Mechanism for authoring and co-locating use case definitions with code to be designed.
+The CLI discovers `.aleph.ts` files co-located with source code and processes them during the publish workflow. Each `.aleph.ts` file defines one use case demo and its MSW mocks; the written description (title, content) lives in Aleph. The CLI matches discovered files against the committed `aleph.lock` file to determine what to publish.
+
+## `.aleph.ts` file format
+
+```typescript
+import { defineUseCase, http, HttpResponse } from '@aleph/demo-sdk'
+
+export default defineUseCase({
+  id: 'login-flow',            // stable identifier — treat as immutable
+  title: 'Login Flow',         // display name — editable via `aleph sync` or Aleph UI
+  export: 'LoginButton',       // optional — scopes use case to a named export
+  demo: './LoginFlowDemo.tsx', // path to demo entry point (relative to this file)
+  handlers: [                  // MSW mock handlers for this demo
+    http.post('/api/auth/login', () =>
+      HttpResponse.json({ token: 'mock-token-123' })
+    )
+  ]
+})
+```
+
+For a frontend React component, the demo entry file (`LoginFlowDemo.tsx`) uses `@aleph/react` to mount the component:
+
+```typescript
+// LoginFlowDemo.tsx
+import { render } from '@aleph/react'
+import { LoginButton } from './LoginButton'
+
+export default render(() => (
+  <LoginButton onLogin={(email) => console.log('Login with', email)} />
+))
+```
+
+## Acceptance Criteria
+
+- The CLI recursively discovers all `.aleph.ts` files under the project root at publish time
+- Each file must export a default `defineUseCase()` call; files that do not match this shape are skipped with a warning
+- The `id` field is the stable lineage key used to match the file against a `use_case_lineages` record in Aleph; it must be present and non-empty — missing or empty `id` is a fatal error
+- The `title` field is the display name; it is used only to detect title drift during the preflight sync check (see Publish Workflow use case)
+- The `export` field is optional; if present, it must match a named export declared in the point's export manifest; if absent, the use case is point-level
+- The `handlers` array defines MSW mock handlers bundled into the demo artifact at build time; it may be empty
+- At publish time, the CLI builds a demo artifact (HTML/JS/CSS bundle) for each discovered `.aleph.ts` file by bundling the `demo` entry point with the `handlers` injected; build errors are fatal and abort the publish
+- Discovered IDs are matched against the `aleph.lock` file; any ID present in a `.aleph.ts` file but not in the lock file causes the preflight to fail with instructions to run `aleph scan`
+- The `aleph.lock` file (see `aleph scan` use case) is the authoritative registry of which use case IDs are declared for this point; detection alone does not register a use case — `aleph scan` must be run first
