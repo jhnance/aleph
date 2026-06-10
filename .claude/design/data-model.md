@@ -12,9 +12,8 @@ CREATE TABLE organizations
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (slug),
     CHECK (char_length(slug) BETWEEN 1 AND 50),
-    CHECK (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
-)
-    );
+    CHECK (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$')
+);
 
 -- Local identity record. The source of truth for authentication is the magic
 -- link / session flow; this table stores only what is needed to identify a user
@@ -43,6 +42,9 @@ CREATE TABLE auth_codes
 );
 
 CREATE INDEX idx_auth_code_email ON auth_codes (email);
+-- Redemption queries by hash (UPDATE ... WHERE code_hash = $1); unique by construction
+-- (SHA-256 of 32 random bytes), so a unique index doubles as a collision guard.
+CREATE UNIQUE INDEX idx_auth_code_hash ON auth_codes (code_hash);
 
 -- No sessions table. Sessions are JWT-based: a signed HS256 JWT stored in an
 -- HttpOnly cookie. The payload carries user_id, active_organization_id, and exp.
@@ -85,8 +87,7 @@ CREATE TABLE domains
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (id, organization_id),
     CHECK (char_length(slug) BETWEEN 1 AND 50),
-    CHECK (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
-) ,
+    CHECK (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'),
     CHECK (parent_id != id),
     FOREIGN KEY (parent_id, organization_id) REFERENCES domains (id, organization_id) ON DELETE RESTRICT
 );
@@ -126,7 +127,7 @@ CREATE INDEX idx_point_domain_id ON points (domain_id);
 
 CREATE TABLE frontend_frameworks
 (
-    id              INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id              UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
     organization_id UUID REFERENCES organizations (id) ON DELETE RESTRICT,
     name            VARCHAR(50) NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -366,7 +367,16 @@ CREATE INDEX idx_use_case_lineage_id ON use_cases (lineage_id);
 CREATE INDEX idx_use_case_parent_id ON use_cases (parent_id);
 
 -- Resolves the many-to-many relationship between `point_version` and `use_case`.
--- A pure associative table with no attributes of its own.
+
+-- `demo_artifact_url` (decided 2026-06-09): nullable; set at insert time when the CLI
+-- has built and uploaded a demo artifact (to S3, before the version POST) for the
+-- (version, use case) pair. When — if ever — NULL is acceptable here is UNDER REVIEW
+-- (2026-06-10). Working position: demo absence is a draft-only state — moving a use
+-- case out of draft should force a version + demo association, so published pairs
+-- always carry a URL. That position must be reconciled with (a) forward-propagated
+-- rows, which deliberately do not copy demos (2026-06-09), and (b) the UI draft →
+-- publish flow, which has no demo build path today. To be settled in the publish-knot
+-- session. Rows are immutable, so the value is write-once at insert.
 
 -- `ON DELETE CASCADE` on `point_version`: removing a version removes its use case
 -- associations. `ON DELETE RESTRICT` on `use_case`: a content record cannot be
@@ -375,11 +385,12 @@ CREATE INDEX idx_use_case_parent_id ON use_cases (parent_id);
 -- `use_case` and `point_version` belong to the same point.
 CREATE TABLE point_version_use_cases
 (
-    point_version_id UUID        NOT NULL,
-    use_case_id      UUID        NOT NULL,
-    point_id         UUID        NOT NULL,
-    organization_id  UUID        NOT NULL,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    point_version_id  UUID        NOT NULL,
+    use_case_id       UUID        NOT NULL,
+    point_id          UUID        NOT NULL,
+    organization_id   UUID        NOT NULL,
+    demo_artifact_url TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (point_version_id, use_case_id),
     FOREIGN KEY (point_version_id, point_id) REFERENCES point_versions (id, point_id) ON DELETE CASCADE,
     FOREIGN KEY (use_case_id, point_id) REFERENCES use_cases (id, point_id) ON DELETE RESTRICT,
@@ -403,8 +414,7 @@ CREATE TABLE connections
     type            connection_type NOT NULL DEFAULT 'dependency',
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
     UNIQUE (from_version_id, to_version_id),
-    CHECK (from_version_id != to_version_id
-) ,
+    CHECK (from_version_id != to_version_id),
     FOREIGN KEY (from_version_id, organization_id) REFERENCES point_versions (id, organization_id) ON DELETE RESTRICT,
     FOREIGN KEY (to_version_id, organization_id) REFERENCES point_versions (id, organization_id) ON DELETE RESTRICT
 );
@@ -835,7 +845,9 @@ async function updateCustomPointType(
   `;
     // Returns nothing if the type doesn't exist OR belongs to another org.
     // Intentionally indistinct — avoids leaking whether the id exists at all.
-    if (!row) throw new ForbiddenError('Custom type not found or not owned by this organization');
+    // 404, not 403: tenant-hiding convention (2026-06-10) — 403 is reserved for
+    // authorization denials on resources the caller can legitimately see.
+    if (!row) throw new NotFoundError('Custom type not found');
 }
 
 async function deleteCustomPointType(sql: Sql, id: string, organizationId: string) {
@@ -844,7 +856,7 @@ async function deleteCustomPointType(sql: Sql, id: string, organizationId: strin
     WHERE id = ${id} AND organization_id = ${organizationId}
     RETURNING id
   `;
-    if (!row) throw new ForbiddenError('Custom type not found or not owned by this organization');
+    if (!row) throw new NotFoundError('Custom type not found');
 }
 
 // Called before INSERT INTO custom_points to enforce org-scoping.
@@ -883,16 +895,24 @@ CREATE TYPE draft_use_case_status AS ENUM ('draft', 'in_review');
 
 CREATE TABLE draft_use_cases
 (
-    id         UUID PRIMARY KEY               DEFAULT gen_random_uuid(),
-    point_id   UUID                  NOT NULL REFERENCES points (id) ON DELETE RESTRICT,
-    lineage_id UUID,
-    title      TEXT                  NOT NULL,
-    content    TEXT                  NOT NULL,
-    status     draft_use_case_status NOT NULL DEFAULT 'draft',
-    created_at TIMESTAMPTZ           NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ           NOT NULL DEFAULT now(),
+    id              UUID PRIMARY KEY               DEFAULT gen_random_uuid(),
+    point_id        UUID                  NOT NULL,
+    organization_id UUID                  NOT NULL,
+    lineage_id      UUID,
+    title           TEXT                  NOT NULL,
+    content         TEXT                  NOT NULL,
+    status          draft_use_case_status NOT NULL DEFAULT 'draft',
+    created_at      TIMESTAMPTZ           NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ           NOT NULL DEFAULT now(),
+    FOREIGN KEY (point_id, organization_id) REFERENCES points (id, organization_id) ON DELETE RESTRICT,
     FOREIGN KEY (lineage_id, point_id) REFERENCES use_case_lineages (id, point_id)
 );
+
+-- organization_id is denormalized here like every other downstream table (added
+-- 2026-06-10) — drafts are tenant-scoped AND mutable, so they need a direct-column
+-- RLS policy more than any immutable table does.
+CREATE INDEX idx_draft_use_case_organization_id ON draft_use_cases (organization_id);
+CREATE INDEX idx_draft_use_case_point_id ON draft_use_cases (point_id);
 
 CREATE TRIGGER trg_set_updated_at_draft_use_cases
     BEFORE UPDATE
@@ -918,8 +938,10 @@ The isolation boundary is the organization. RLS enforces that a request can only
 1. **User and membership model** — `users`, `organization_memberships`. ✅ Done.
 
 2. **Connection-level context** — At the start of each request, the Fastify `preHandler` calls
-   `sql.reserve()`, begins a transaction, and runs `SET LOCAL app.current_org_id = $1` using the
-   `active_organization_id` from the verified JWT. ✅ Done.
+   `sql.reserve()`, begins a transaction, and runs `SELECT set_config('app.current_org_id', $1, true)`
+   using the `active_organization_id` from the verified JWT. (`set_config(..., true)` is
+   transaction-local — identical semantics to `SET LOCAL` — and accepts a bind parameter,
+   which `SET` does not.) ✅ Done.
 
 3. **`organization_id` denormalized onto all downstream tables
    ** — so RLS policies are direct column checks with no multi-hop joins. ✅ Done.

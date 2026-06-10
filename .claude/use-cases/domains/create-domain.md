@@ -8,7 +8,7 @@ An org member creates a new domain (or sub-domain) within their organization. A 
 
 ## Acceptance Criteria
 
-- `POST /api/domains` accepts `name`, `slug`, and an optional `parentId`; requires an authenticated session with an active org
+- `POST /api/orgs/:orgSlug/domains` accepts `name`, `slug`, and an optional `parentId`; requires an authenticated session with an active org
 - `slug` must be 1–50 characters and match `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`; returns 400 if invalid
 - `organization_id` comes from the session JWT, never the request body
 - For root domains (`parentId` absent): `slug` must be unique among all root domains in the org (enforced by `idx_domain_slug_root`); returns 409 if duplicate
@@ -16,4 +16,4 @@ An org member creates a new domain (or sub-domain) within their organization. A 
 - If `parentId` is supplied, the parent domain must exist and belong to the current org; the compound FK `FOREIGN KEY (parent_id, organization_id) REFERENCES domains (id, organization_id)` enforces this at the DB layer; returns 404 if the parent is not found in the current org
 - A domain cannot be its own parent (`CHECK (parent_id != id)` on `domains`)
 - Returns 201 with domain data: `id`, `name`, `slug`, `parentId` (null if root), `organizationId`, `createdAt`
-- Requests with no active org (`org` claim null in JWT) return 400; unauthenticated requests return 401
+- Requires org role `member` or higher — `viewer` is read-only; insufficient role returns 403. The `:orgSlug` must match the session's active org; mismatch returns 403 (`org_context_mismatch`). Requests with no active org (`org` claim null in JWT) return 400; unauthenticated requests return 401
