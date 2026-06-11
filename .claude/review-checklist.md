@@ -65,43 +65,50 @@ Work top-to-bottom by phase. `[x]` = done, `[s]` = session scheduled, `[ ]` = pe
 
 ---
 
-## Phase 2 — Interactive session: the publish knot
+## Phase 2 — Interactive session: the publish knot ✓ (2026-06-10)
 
-One sitting; these are a single tangle (propagation, payload, lineage heads).
+Session outcome: the knot dissolved when Joshua identified server-side forward propagation as an anachronism ("I believe we designed around the need for that kind of forward propagation when we committed ourselves to the .aleph.config... file"). Decisions in `decisions/2026-06-10.md`.
 
-- [s] **2.1 Show the propagation + succession design** *(annotation #2)*
+- [x] **2.1 Show the propagation + succession design** *(annotation #2)*
   > Quoted text: "skip lineages whose export is absent from the new manifest (report them as dropped in the publish response), and for confirmed renames, have the publish handler create successor lineages + content records with cross-lineage parent_id"
   > Joshua: "Show me what this would look like, please."
+  Walked through (ProductCarousel example), then superseded: propagation removed entirely; export scoping moved to `point_version_use_cases` so lineages survive renames — no skipping, no successor minting, no cross-lineage parent_id.
 
-- [s] **2.2 Elaborate: how this relates to `removeUseCaseFromVersion`** *(annotation #3)*
+- [x] **2.2 Elaborate: how this relates to `removeUseCaseFromVersion`** *(annotation #3)*
   > Quoted text: "it also resolves half of the open removeUseCaseFromVersion question's surface area"
   > Joshua: "Please also elaborate on this point."
+  Resolved as **unpublish/republish** (soft retraction, `unpublished_at`, admin view, never delete); cascade question mooted — no propagation means independent rows. `remove-use-case-from-version.md` rewritten.
 
-- [s] **2.3 Publish payload gaps, one at a time** *(annotations #4, #5, #6)*
+- [x] **2.3 Publish payload gaps, one at a time** *(annotations #4, #5, #6)*
   > Quoted text: "New use cases never reach a version... Demo artifact association violates the schema's own trigger... Titles have no push path"
   > Joshua: "let's address these each in turn in an interactive session." Also (#4): "What do you mean by 'can't carry.' It seems like it *doesn't* contain what it needs, but your claim is that it *cannot*?" — conceded: "doesn't", not "can't"; it's a spec gap, not an impossibility. Upload-before-POST endorsed (#6: "good").
+  Payload designed: `useCases: [{ lineageId, title, exportName?, demoArtifactUrl }]`; trigger replaced by compound FK to `point_version_exports`; titles were already pull-only (06-10). `publish-point-version.md` + `publish-workflow.md` updated; `aleph-config.md` created (files-only, config-for-discovery).
 
-- [s] **2.4 Worked example: duplicate lineage on one version + racy head** *(annotation #11)*
+- [x] **2.4 Worked example: duplicate lineage on one version + racy head** *(annotation #11)*
   > Quoted text: "Edit-then-publish puts two content records of one lineage on the same version, and head resolution is racy... Fix: denormalize lineage_id onto point_version_use_cases + UNIQUE (point_version_id, lineage_id)... replace-don't-add... lock the lineage row"
   > Joshua: "Give me a specific example of this happening."
+  Alice/Bob example shown; all three fix parts adopted in the DDL (`lineage_id` + UNIQUE, lineage `FOR UPDATE` lock, replace-don't-add via narrow `use_case_id` mutability).
 
-- [s] **2.5 Explain propagation-over-branches** *(annotation #28)*
+- [x] **2.5 Explain propagation-over-branches** *(annotation #28)*
   > Quoted text: "propagation-over-branches should be stated in the propagation session"
   > Joshua: "What does this mean?"
+  Explained (predecessor tree; hotfix + next release share a predecessor). Now only relevant to language-edit re-pointing: "forward" = predecessor-tree descendants of the edited version (spans branches), specced in `publish-use-case.md`.
 
-- [s] **2.6 Explain the cycle-walk dead-code claim** *(annotation #30)*
+- [x] **2.6 Explain the cycle-walk dead-code claim** *(annotation #30)*
   > Quoted text: "The publish-time recursive-CTE cycle walk is dead code: every publish-created edge originates at the brand-new version, so the graph is a DAG by construction..."
   > Joshua: "Need more context. Not following."
+  Explained (in-degree-zero argument + point-vs-version mutual dependency example); Joshua: rewrite the section — "cycles aren't possible in the current design, but we'll want to be mindful of introducing later features that could introduce cycles." `data-model.md` + `publish-point-version.md` updated; walk removed.
 
-- [s] **2.7 The pre-existing forward-propagation session checklist** (from `use-cases/index.md`): `removeUseCaseFromVersion` cascade semantics, publish-time suppression, stale-use-case UX, `propagated BOOLEAN` column.
+- [x] **2.7 The pre-existing forward-propagation session checklist** (from `use-cases/index.md`): `removeUseCaseFromVersion` cascade semantics, publish-time suppression, stale-use-case UX, `propagated BOOLEAN` column.
+  All four mooted or resolved by removing propagation; index.md session marked ✓.
 
-- [s] **2.8 `demo_artifact_url` NULL semantics** *(code-review annotations, 2026-06-10)*
+- [x] **2.8 `demo_artifact_url` NULL semantics** *(code-review annotations, 2026-06-10)*
   > Joshua: "We need to carefully think through when—if ever—it is okay to have NULL here. I think... this is only applicable to draft use cases authored in Aleph's UI." / "You should be forced to associate a use case with a version+demo if moving it out of draft."
-  Tension to resolve: that rule vs. forward-propagated rows not copying demos (06-09) vs. the UI draft→publish flow having no demo build path.
+  Resolved stronger than the working position: **NOT NULL** — "demos should never propagate. Demos are immutable and attached to a certain point version at release time" (Joshua). The UI is a drafting surface and never attaches; every attachment is born in a CLI publish with its demo.
 
-- [s] **2.9 Adding use cases (and demos) to an already-published version** *(code-review annotation, 2026-06-10)*
+- [x] **2.9 Adding use cases (and demos) to an already-published version** *(code-review annotation, 2026-06-10)*
   > Joshua: "The only problem with this is when you publish a new version of the codebase without a corresponding use case. In general, you shouldn't do this, but it will happen. We need to make sure people have the ability to add use cases after the fact... We need to address this flow in our use cases design documents."
-  Text-only association already works via publish-use-case; post-hoc *demo* attachment has no path (immutable `point_version_use_cases`).
+  Resolved as **author any time, appears on the next published version** — no retro-attachment; `metadata` releases (`+` suffix, same code) are the cheap vehicle for doc-only additions. Accepted tradeoff (Joshua): "no retroactive association of use case language to old versions of the code. Fine for now." New TODO recorded in `point-detail.md`: owner-authored public-facing version notes (explain unpublishes to users).
 
 ---
 

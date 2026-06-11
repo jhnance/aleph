@@ -24,3 +24,7 @@ A user views a single point: its identity (name, type, domain, status, health), 
 ## Open questions
 
 - Fallback when no `release` version exists yet (only prereleases/hotfixes): latest by semantic ordering?
+
+## TODO (2026-06-10)
+
+- **Owner-authored, public-facing version notes.** Free-text notes attached to a point version by its owners, displayed on the version page. Motivating example (from the unpublish decision): "Heads up, you might remember a use case that no longer appears in this version's list. You're not going crazy! We unpublished it because our documentation for it was incorrect. You can see the updated behavior and use case language in <other version>. Thank you for your understanding!" Needs: storage (mutable, version-scoped), authoring permissions, and whether notes can link versions/use cases as first-class references. See `use-case-management/remove-use-case-from-version.md`.

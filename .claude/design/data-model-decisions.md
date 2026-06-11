@@ -52,6 +52,8 @@ For `use_cases`, `point_id` is denormalized from `use_case_lineages` (which is i
 
 **Residual risk:** with the constraint gone, accidental history-splitting is possible again at the DB level — a duplicate lineage is now indistinguishable from the legitimate many-lineages-per-export case, so no constraint can catch it. The guard is application-level: lineages are created only in explicit flows (UI publish with `lineageId = null`, CLI scaffold with a pre-generated UUID), and the explicit-ID model in `.aleph.ts` files means the CLI never infers identity. What remains is a *user* accidentally authoring a duplicate use case — a product/duplicate-detection concern, not a schema one.
 
+*(2026-06-10: export scoping has since moved off lineages entirely — `use_case_lineages` has no `export_id`; scoping lives per-version on `point_version_use_cases`. The no-uniqueness conclusion above is unchanged.)*
+
 ---
 
 ## Immutability enforcement: BEFORE UPDATE triggers
@@ -64,11 +66,11 @@ For `use_cases`, `point_id` is denormalized from `use_case_lineages` (which is i
 
 ---
 
-## Export-scoping rule: version-level trigger on point_version_use_cases
+## Export-scoping rule: per-version, on point_version_use_cases
 
-*(Superseded 2026-06-08 — see `decisions/2026-06-08.md`.)* The original point-level rule ("if a point has any version with exports, all its lineages must have a non-null `export_id`") was removed: it blocked legitimate point-level use cases (e.g. "the module initializes without side effects") on points that also have exports, and its "any version ever" semantics retroactively constrained history.
+*(History: the original point-level rule — "if a point has any version with exports, all its lineages must have a non-null `export_id`" — was removed 2026-06-08: it blocked legitimate point-level use cases on points that also have exports. The replacement, lineage-level `export_id` validated by a `BEFORE INSERT` trigger, was itself superseded 2026-06-10.)*
 
-**Current rule:** point-level lineages (`export_id IS NULL`) are always valid, for any point. The enforced invariant is version-level: if a lineage is export-scoped, the referenced export must be present in the specific version the use case is being associated with — enforced by a `BEFORE INSERT` trigger on `point_version_use_cases` (see `data-model.md`).
+**Current rule:** export scoping is a column on `point_version_use_cases` (`export_id`, NULL = point-level in that version), not on the lineage — a lineage survives export renames with one identity. The version-level invariant (a scoped attachment's export must be in that version's manifest) is enforced declaratively by the compound FK to `point_version_exports`; no trigger (see `data-model.md`).
 
 ---
 
@@ -76,16 +78,16 @@ For `use_cases`, `point_id` is denormalized from `use_case_lineages` (which is i
 
 `point_versions` carries `version_major INTEGER`, `version_minor INTEGER`, `version_patch INTEGER`, and `version_classification ENUM('release', 'prerelease', 'hotfix', 'metadata')` rather than relying on parsing `version_semantic` at query time.
 
-**Why:** Semver's `-` suffix has a precise spec meaning (pre-release, lower precedence than the release) that conflicts with how teams actually use it — hotfixes applied on top of a released version are semantically *higher* than that release, not lower. Inferring intent from the suffix string is not possible. An explicit classification stored at publish time makes the intent unambiguous and keeps forward-propagation queries simple.
+**Why:** Semver's `-` suffix has a precise spec meaning (pre-release, lower precedence than the release) that conflicts with how teams actually use it — hotfixes applied on top of a released version are semantically *higher* than that release, not lower. Inferring intent from the suffix string is not possible. An explicit classification stored at publish time makes the intent unambiguous and keeps version-ordering queries simple.
 
 **Classification rules enforced by the CLI** (flags updated 2026-06-09: a single `--release-type=release|prerelease|hotfix|metadata` replaced the `--is-prerelease` / `--is-hotfix` pair — see `decisions/2026-06-09.md`):
 - No suffix → `release` (inferred, no flag required)
 - `+` suffix → `metadata` (inferred, no flag required; `+` is build metadata per spec and is never intended for consumption in the same way a release is)
 - `-` suffix → ambiguous between `prerelease` and `hotfix`; `--release-type` is required, error if omitted
 
-**Semantic ordering:** Forward propagation uses the composite key `(version_major, version_minor, version_patch, suffix_rank, version_monotonic)`, where `suffix_rank` is derived at query time: `metadata = 0`, `prerelease = 0`, `release = 1`, `hotfix = 2`. `version_monotonic` is the final tiebreaker — insertion order within the same `(major, minor, patch, classification)` bucket. `--release-type=hotfix` is an explicit opt-in to non-spec ordering; `prerelease` follows the spec. Within a classification bucket, publication order determines precedence — a deliberate simplification communicated to users.
+**Semantic ordering:** Predecessor resolution uses the composite key `(version_major, version_minor, version_patch, suffix_rank, version_monotonic)`, where `suffix_rank` is derived at query time: `metadata = 0`, `prerelease = 0`, `release = 1`, `hotfix = 2`. `version_monotonic` is the final tiebreaker — insertion order within the same `(major, minor, patch, classification)` bucket. `--release-type=hotfix` is an explicit opt-in to non-spec ordering; `prerelease` follows the spec. Within a classification bucket, publication order determines precedence — a deliberate simplification communicated to users.
 
-**predecessor_version_id:** The publish handler resolves the semantic predecessor once at publish time and stores it as `predecessor_version_id` on the new `point_versions` row. Forward propagation follows this FK directly rather than rerunning the composite key query. This also handles the edge case where a `prerelease` or `metadata` version is published after the release for the same patch already exists — the composite key query would incorrectly skip over that release (suffix_rank 0 < 1), so the handler short-circuits to it directly before falling through to the normal query. `ON DELETE RESTRICT` on the FK prevents removing a version that another version's propagation history depends on.
+**predecessor_version_id:** The publish handler resolves the semantic predecessor once at publish time and stores it as `predecessor_version_id` on the new `point_versions` row — version-tree metadata, used for display, succession reasoning, and language-edit forward re-pointing (it drives no use case copying; server-side forward propagation was removed 2026-06-10). This also handles the edge case where a `prerelease` or `metadata` version is published after the release for the same patch already exists — the composite key query would incorrectly skip over that release (suffix_rank 0 < 1), so the handler short-circuits to it directly before falling through to the normal query. `ON DELETE RESTRICT` on the FK prevents removing a version that another version's tree history depends on.
 
 **Why this over org-level configuration:** An org-level setting would create divergent versioning semantics across tenants on the same instance — two orgs interpreting the same version string differently. Per-publish intent keeps the behavior local and explicit.
 
@@ -105,7 +107,7 @@ Draft authoring is handled by a `draft_use_cases` table rather than a `status` c
 
 **Why:** Adding a status column that transitions (draft → active) would require UPDATEs to `use_cases`, directly conflicting with the immutability trigger. A separate mutable table keeps the two concerns cleanly separated: `draft_use_cases` is freely editable, `use_cases` is the immutable record of what was published.
 
-**Publish flow:** On publish, a new `use_case_lineages` row is created if needed, a `use_cases` row is inserted, the draft is linked to a version via `point_version_use_cases`, and the draft row is deleted.
+**Publish flow:** On publish, a new `use_case_lineages` row is created if needed, a `use_cases` row is inserted, and the draft row is deleted. Draft-publish is language-only (2026-06-10) — version attachments are created exclusively by the CLI version-publish payload; for existing lineages the new record is re-pointed forward onto existing attachments (see `publish-use-case.md`).
 
 **lineage_id is nullable:** A draft can exist before a lineage is created (new use case) or reference an existing lineage (new version of an existing use case). When non-null, a compound FK enforces that the lineage belongs to the same point.
 

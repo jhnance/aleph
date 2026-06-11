@@ -41,9 +41,6 @@ No existing tool owns this space cleanly. Internal wikis go stale. Component lib
 
 ## Open questions
 
-**`removeUseCaseFromVersion` forward-propagation semantics**
-If a use case is removed from version 1.2, should it propagate forward (removing it from all later versions that inherited it), or only affect 1.2? Must be resolved before implementing — reversing this after launch is a breaking change.
-
 **Invite / org join flow**
 How does a user join an org? Options: admin sends an invite link, admin adds email directly, or user creates an org on first sign-in. Not yet designed.
 

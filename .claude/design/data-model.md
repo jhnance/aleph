@@ -304,30 +304,26 @@ CREATE INDEX idx_pve_export_id ON point_version_exports (export_id);
 
 -- The stable logical identity of a use case within a point. Created once when a
 -- use case is first introduced; never modified after creation. All content records
--- across the lifetime of a use case share the same `lineage_id`.
+-- across the lifetime of a use case share the same `lineage_id`. The lineage id IS
+-- the `id` in the use case's `.aleph.ts` file (UUIDs only, 2026-06-10).
 
--- `export_id` scopes the lineage to a specific export of the point. A `NULL`
--- `export_id` means the use case belongs to the point itself (used when the point
--- defines no exports). When non-null, the compound foreign key on
--- `(export_id, point_id)` enforces at the database level that the referenced export
--- belongs to the same point as the lineage. Postgres does not enforce a composite
--- FK when any participating column is `NULL`, so point-level lineages
--- (`export_id IS NULL`) are correctly exempt from this check.
+-- Lineages carry NO export scoping (moved to `point_version_use_cases`, 2026-06-10).
+-- Export scoping is a fact about a (version, use case) pair, not about the use
+-- case's identity: the same lineage attaches to export `CarouselItem` in v1.0.0 and
+-- to its confirmed successor `CarouselSlide` in v2.0.0 — the `.aleph.ts` file keeps
+-- its `id` through the rename, so the lineage must survive it too.
 CREATE TABLE use_case_lineages
 (
     id              UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
     point_id        UUID        NOT NULL,
     organization_id UUID        NOT NULL,
-    export_id       UUID,                -- NULL = point-level; non-null = export-scoped
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     FOREIGN KEY (point_id, organization_id) REFERENCES points (id, organization_id) ON DELETE RESTRICT,
-    FOREIGN KEY (export_id, point_id) REFERENCES point_exports (id, point_id),
     UNIQUE (id, point_id),
     UNIQUE (id, organization_id)
 );
 
 CREATE INDEX idx_use_case_lineage_point_id ON use_case_lineages (point_id);
-CREATE INDEX idx_use_case_lineage_export_id ON use_case_lineages (export_id);
 
 -- An immutable content record. Records are never updated in place; each edit
 -- creates a new row. Two columns drive history and diffing:
@@ -337,11 +333,10 @@ CREATE INDEX idx_use_case_lineage_export_id ON use_case_lineages (export_id);
 -- - `parent_id` — the derivation pointer. Tracks which specific record an edit
 --   was derived from, enabling ancestry walks and edit history display.
 
--- In the export rename succession flow (when a user confirms continuity between
--- two exports at publish time), new content records for the successor export may
--- carry a `parent_id` pointing to the last content record from the predecessor
--- export's lineage. This is the only case where `parent_id` crosses a lineage
--- boundary, and it is a deliberate outcome of an explicit user action.
+-- `parent_id` never crosses a lineage boundary. (An earlier design had export
+-- rename succession minting successor lineages with cross-lineage parents; with
+-- export scoping moved to `point_version_use_cases`, lineages survive renames and
+-- that case no longer exists — 2026-06-10.)
 
 -- `point_id` and `organization_id` are both denormalized from `use_case_lineages`
 -- and are safe because both tables are immutable after creation. They are carried
@@ -359,6 +354,7 @@ CREATE TABLE use_cases
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (id, point_id),
     UNIQUE (id, organization_id),
+    UNIQUE (id, lineage_id), -- FK target for point_version_use_cases (re-points stay in-lineage)
     FOREIGN KEY (lineage_id, point_id) REFERENCES use_case_lineages (id, point_id) ON DELETE RESTRICT,
     FOREIGN KEY (lineage_id, organization_id) REFERENCES use_case_lineages (id, organization_id) ON DELETE RESTRICT
 );
@@ -366,38 +362,67 @@ CREATE TABLE use_cases
 CREATE INDEX idx_use_case_lineage_id ON use_cases (lineage_id);
 CREATE INDEX idx_use_case_parent_id ON use_cases (parent_id);
 
--- Resolves the many-to-many relationship between `point_version` and `use_case`.
+-- One row = "this point version supports this use case" — the attachment the
+-- catalog displays. Rows are created exclusively by the version-publish payload
+-- (2026-06-10): there is no server-side forward propagation and no UI attachment
+-- path. A use case appears on a version because the CLI published it there, with a
+-- demo, at publish time.
 
--- `demo_artifact_url` (decided 2026-06-09): nullable; set at insert time when the CLI
--- has built and uploaded a demo artifact (to S3, before the version POST) for the
--- (version, use case) pair. When — if ever — NULL is acceptable here is UNDER REVIEW
--- (2026-06-10). Working position: demo absence is a draft-only state — moving a use
--- case out of draft should force a version + demo association, so published pairs
--- always carry a URL. That position must be reconciled with (a) forward-propagated
--- rows, which deliberately do not copy demos (2026-06-09), and (b) the UI draft →
--- publish flow, which has no demo build path today. To be settled in the publish-knot
--- session. Rows are immutable, so the value is write-once at insert.
+-- `lineage_id` is denormalized from `use_cases` (safe: both columns immutable
+-- there). It buys two guarantees: `UNIQUE (point_version_id, lineage_id)` makes
+-- "two content records of one lineage on the same version" impossible, and content
+-- edits re-point an attachment to the new lineage head without joins
+-- (replace-don't-add). The FK on (use_case_id, lineage_id) pins the content record
+-- to the claimed lineage, so a re-point can never jump lineages.
 
--- `ON DELETE CASCADE` on `point_version`: removing a version removes its use case
--- associations. `ON DELETE RESTRICT` on `use_case`: a content record cannot be
--- deleted while any version still references it.
--- `point_id` is carried here to enable compound FKs that enforce both
--- `use_case` and `point_version` belong to the same point.
+-- `export_id` records the export this use case is scoped to IN THIS VERSION
+-- (NULL = point-level). Scoping moved here from `use_case_lineages` (2026-06-10):
+-- it is a fact about the (version, use case) pair — lineage L attaches to
+-- `CarouselItem` in v1.0.0 and to `CarouselSlide` in v2.0.0 with one identity.
+-- The compound FK to `point_version_exports` enforces manifest presence
+-- declaratively (the export must be in this version's manifest), replacing the
+-- old trg_check_version_use_case_export_presence trigger. Postgres skips compound
+-- FK enforcement when export_id IS NULL, exempting point-level rows.
+
+-- `demo_artifact_url` is NOT NULL (2026-06-10): every attachment is born in a CLI
+-- publish that built the demo and uploaded it to S3 before the version POST. There
+-- is no demo-less attachment state — a UI-authored use case exists as lineage +
+-- content records only, until an engineer ships its `.aleph.ts` in a subsequent
+-- (possibly `metadata`-classified) version.
+
+-- `unpublished_at` is the soft-retraction mechanism (2026-06-10). NULL = visible.
+-- A claim that turns out false on a shipped version is unpublished — hidden from
+-- the version's visible use case list but retained, viewable by org admins in a
+-- dedicated view, and republishable by resetting to NULL. Attachment rows are
+-- never deleted by user action: you can't go back in time and change what was
+-- published, but you can retract the claim.
+
+-- Mutability is narrow (see amended immutability trigger below): only
+-- `use_case_id` (re-pointed forward on a lineage content edit) and
+-- `unpublished_at` may change.
 CREATE TABLE point_version_use_cases
 (
     point_version_id  UUID        NOT NULL,
     use_case_id       UUID        NOT NULL,
+    lineage_id        UUID        NOT NULL,
+    export_id         UUID,                -- NULL = point-level in this version
     point_id          UUID        NOT NULL,
     organization_id   UUID        NOT NULL,
-    demo_artifact_url TEXT,
+    demo_artifact_url TEXT        NOT NULL,
+    unpublished_at    TIMESTAMPTZ,         -- NULL = published/visible
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (point_version_id, use_case_id),
+    UNIQUE (point_version_id, lineage_id),
     FOREIGN KEY (point_version_id, point_id) REFERENCES point_versions (id, point_id) ON DELETE CASCADE,
+    FOREIGN KEY (use_case_id, lineage_id) REFERENCES use_cases (id, lineage_id) ON DELETE RESTRICT,
     FOREIGN KEY (use_case_id, point_id) REFERENCES use_cases (id, point_id) ON DELETE RESTRICT,
+    FOREIGN KEY (lineage_id, point_id) REFERENCES use_case_lineages (id, point_id) ON DELETE RESTRICT,
+    FOREIGN KEY (point_version_id, export_id) REFERENCES point_version_exports (point_version_id, export_id) ON DELETE CASCADE,
     FOREIGN KEY (point_version_id, organization_id) REFERENCES point_versions (id, organization_id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_pvuc_use_case_id ON point_version_use_cases (use_case_id);
+CREATE INDEX idx_pvuc_lineage_id ON point_version_use_cases (lineage_id);
 
 CREATE TYPE connection_type AS ENUM ('dependency', 'other');
 
@@ -579,44 +604,16 @@ CREATE TRIGGER trg_point_version_exports_immutable
 
 **Export-scoping rule**
 
-`use_case_lineages.export_id` is nullable. `NULL` means the use case is point-level (describes the
-point as a whole, not any specific export); non-null means it is scoped to a specific export. Both are
-valid at any time, for any point, regardless of whether the point has declared exports.
+`point_version_use_cases.export_id` is nullable. `NULL` means the use case is point-level *in that
+version*; non-null scopes it to a specific export *in that version*. Both are valid at any time, for
+any point, regardless of whether the point has declared exports. (Scoping moved off
+`use_case_lineages` on 2026-06-10 so a lineage survives export renames with one identity.)
 
-The version-level invariant: if a lineage is export-scoped, the referenced export must be present in
-the specific version the use case is being associated with. Enforced by a trigger on
-`point_version_use_cases`:
-
-```sql
-CREATE OR REPLACE FUNCTION check_version_use_case_export_presence()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_export_id UUID;
-BEGIN
-    -- Resolve the export_id of the lineage for the use case being associated
-    SELECT ucl.export_id INTO v_export_id
-    FROM use_cases uc
-    JOIN use_case_lineages ucl ON ucl.id = uc.lineage_id
-    WHERE uc.id = NEW.use_case_id;
-
-    -- Point-level use cases (export_id IS NULL) are always allowed
-    IF v_export_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM point_version_exports
-        WHERE point_version_id = NEW.point_version_id
-          AND export_id = v_export_id
-    ) THEN
-        RAISE EXCEPTION
-            'export % is not present in version %', v_export_id, NEW.point_version_id;
-    END IF;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_check_version_use_case_export_presence
-    BEFORE INSERT ON point_version_use_cases
-    FOR EACH ROW EXECUTE FUNCTION check_version_use_case_export_presence();
-```
+The version-level invariant — a scoped attachment's export must be present in that version's
+manifest — is enforced declaratively by the compound FK
+`FOREIGN KEY (point_version_id, export_id) REFERENCES point_version_exports (point_version_id, export_id)`.
+No trigger is needed (the former `trg_check_version_use_case_export_presence` is superseded);
+Postgres skips compound FK enforcement when `export_id IS NULL`, exempting point-level rows.
 
 **`use_case_lineages` immutability**
 
@@ -639,17 +636,34 @@ CREATE TRIGGER trg_use_case_lineages_immutable
     FOR EACH ROW EXECUTE FUNCTION enforce_use_case_lineages_immutable();
 ```
 
-**`point_version_use_cases` immutability**
+**`point_version_use_cases` near-immutability**
 
-Associative rows are written once and never updated — remove and re-insert instead. Enforced by trigger:
+Attachment rows are written once at version publish and never deleted by user action. Exactly two
+columns may change after insert (2026-06-10):
+
+- `use_case_id` — re-pointed to the new lineage head when a content edit is published
+  (replace-don't-add; the FK on `(use_case_id, lineage_id)` guarantees the re-point stays in-lineage)
+- `unpublished_at` — toggled by the unpublish/republish flow (soft retraction; see
+  `use-cases/use-case-management/remove-use-case-from-version.md`)
+
+Everything else is frozen by trigger:
 
 ```sql
 CREATE
 OR REPLACE FUNCTION enforce_point_version_use_cases_immutable()
 RETURNS TRIGGER AS $$
 BEGIN
-    RAISE
-EXCEPTION 'point_version_use_cases records are immutable and cannot be updated';
+    IF NEW.point_version_id IS DISTINCT FROM OLD.point_version_id
+        OR NEW.lineage_id IS DISTINCT FROM OLD.lineage_id
+        OR NEW.export_id IS DISTINCT FROM OLD.export_id
+        OR NEW.point_id IS DISTINCT FROM OLD.point_id
+        OR NEW.organization_id IS DISTINCT FROM OLD.organization_id
+        OR NEW.demo_artifact_url IS DISTINCT FROM OLD.demo_artifact_url
+        OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+        RAISE
+EXCEPTION 'point_version_use_cases rows are immutable except use_case_id (content re-point) and unpublished_at';
+END IF;
+RETURN NEW;
 END;
 $$
 LANGUAGE plpgsql;
@@ -704,7 +718,9 @@ CREATE TRIGGER trg_connections_immutable
 
 **Connection acyclicity**
 
-The schema does not prevent cycles (A → B → A). The publish workflow must detect and reject any connection that would introduce a cycle, using a recursive CTE graph walk before inserting.
+Cycles are not possible in the current design (2026-06-10). Connections are created only at version publish, and every edge originates at the brand-new version — which nothing can point to yet — so the version graph is a DAG by construction. (Mutual dependency between *points* is fine and is not a cycle: the version-level edges still only point backward in time.)
+
+Be mindful when introducing later features that could create edges between two *existing* versions (e.g. a manual UI connection editor, a backfill tool): any such path makes cycles constructible and must add a cycle check (recursive CTE walk) before insert.
 
 **Rename = new export lineage**
 
@@ -883,10 +899,8 @@ Use cases are immutable once published. Draft authoring and approval are handled
 `use_cases` intact. A draft is promoted to
 `use_cases` at publish time; the draft row is then deleted or archived.
 
-`lineage_id` is nullable:
-`NULL` means the draft is for a brand-new use case (lineage is created at publish time); non-null means it is a new content draft for an existing use case. The compound FK
-`FOREIGN KEY (lineage_id, point_id) REFERENCES use_case_lineages (id, point_id)` enforces scope when non-null; Postgres skips enforcement when
-`lineage_id IS NULL`.
+`lineage_id` is `NOT NULL` (2026-06-10): every draft references a lineage from birth. For a brand-new use case the server registers the `use_case_lineages` row at draft creation — the lineage UUID is the use case's ID, shown in the UI for pasting into the codebase's `.aleph.ts`. For a revision the draft references the existing lineage. The compound FK
+`FOREIGN KEY (lineage_id, point_id) REFERENCES use_case_lineages (id, point_id)` enforces scope.
 
 Sketch:
 
@@ -898,7 +912,7 @@ CREATE TABLE draft_use_cases
     id              UUID PRIMARY KEY               DEFAULT gen_random_uuid(),
     point_id        UUID                  NOT NULL,
     organization_id UUID                  NOT NULL,
-    lineage_id      UUID,
+    lineage_id      UUID                  NOT NULL,
     title           TEXT                  NOT NULL,
     content         TEXT                  NOT NULL,
     status          draft_use_case_status NOT NULL DEFAULT 'draft',
@@ -920,15 +934,22 @@ CREATE TRIGGER trg_set_updated_at_draft_use_cases
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 ```
 
-Publish semantics: if `lineage_id IS NULL`, create a new
-`use_case_lineages` row first, then insert into `use_cases` with `parent_id = NULL`. If
-`lineage_id IS NOT NULL`, insert into `use_cases` with
-`parent_id` set to the current head of the lineage. In both cases, link the new
-`use_cases` row to the target version via `point_version_use_cases` and delete the draft.
+Publish semantics (2026-06-10 — the UI is a drafting surface; it never creates version
+attachments): UI draft-publish applies to **revisions only** (the lineage already has attachments) —
+lock the lineage (`SELECT ... FOR UPDATE` on the `use_case_lineages` row, serializing concurrent
+edit-publishes), insert into `use_cases` with `parent_id` set to the head at publish time, re-point
+the lineage's attachments on the edited version and its predecessor-tree descendants to the new
+record (`UPDATE point_version_use_cases SET use_case_id = ...`), and delete the draft. A
+**brand-new** use case's draft has no UI publish: it is promoted to the first content record by the
+CLI version publish that attaches it (version + demo at the moment it leaves draft state).
 
-**removeUseCaseFromVersion**
+**Unpublish / republish (formerly removeUseCaseFromVersion)**
 
-Not yet implemented. The semantic question of whether removal should forward-propagate (removing the use case from all later versions that still reference it) must be resolved before implementation, as changing this behavior post-launch is a breaking change in user-facing semantics.
+Resolved 2026-06-10. There is no hard removal and no cascade question — server-side forward
+propagation no longer exists, so every attachment row is independent. Retracting a claim from a
+published version sets `unpublished_at` on that one row (hidden from the version's visible list;
+retained; org admins see it in a dedicated view and may republish by resetting to NULL). See
+`use-cases/use-case-management/remove-use-case-from-version.md`.
 
 **Row-level security**
 

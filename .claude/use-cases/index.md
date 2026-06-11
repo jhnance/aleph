@@ -11,25 +11,8 @@ Resolved: `.aleph.ts` file format, explicit `id` field (Option C), `aleph new us
 
 **One open question remaining:** `aleph sync` title push — which `pointVersionId` to publish against. See `decisions/2026-06-09.md`.
 
-### Use case forward propagation
-Covers removal semantics, publish-time suppression, stale detection UX, and schema decisions. Checklist:
-
-**Core design questions**
-- [ ] Decide cascade semantics for `removeUseCaseFromVersion`
-- [ ] Decide whether removal can be triggered at publish time (suppress propagation in the payload), or is always a separate post-publish action
-- [ ] Decide how the publish workflow surfaces stale use cases and whether that surface triggers removal
-
-**Schema**
-- [ ] Decide whether `point_version_use_cases` needs a `propagated BOOLEAN` column
-
-**Use case documents**
-- [ ] `remove-use-case-from-version.md` — design and document once cascade semantics are decided
-- [ ] `publish-point-version.md` — update if publish-time suppression is added
-- [ ] `publish-workflow.md` (SDK-CLI) — UX for stale use case detection → removal prompt
-
-**Supporting docs**
-- [ ] `data-model.md` / `data-model-decisions.md` — schema + cascade decision
-- [ ] `ALIGNMENT.md` — remove the open question once resolved
+### Use case forward propagation ✓ (2026-06-10)
+Resolved by dissolving it: server-side forward propagation was removed (anachronism predating `.aleph.ts`/`aleph.lock`) — a version's use case set is exactly the publish payload, every attachment is born with a demo (`demo_artifact_url NOT NULL`), export scoping moved to `point_version_use_cases`, and removal became per-row **unpublish/republish** (no cascade exists to decide). "Propagation" now means language edits re-pointing a lineage's attachments forward. No `propagated BOOLEAN` needed. See `decisions/2026-06-10.md`; docs updated: `publish-point-version.md`, `publish-use-case.md`, `remove-use-case-from-version.md`, `publish-workflow.md`, `aleph-config.md` (new), `data-model.md`, ALIGNMENT.md.
 
 ### Health scores system
 Fully spec out the health scores system. Checklist:
@@ -65,15 +48,15 @@ Fully spec out the health scores system. Checklist:
 - [Ecosystem Map](catalog/ecosystem-map.md) — graph visualization of points and connections *(stub)*
 
 ## versioning
-- [Publish Point Version](versioning/publish-point-version.md) — SDK/CLI publishes a new version; assigns semantic + monotonic version, forward-propagates use cases
+- [Publish Point Version](versioning/publish-point-version.md) — SDK/CLI publishes a new version; assigns semantic + monotonic version, records use case attachments from the payload
 - [View Version History](versioning/view-version-history.md) — user views all published versions of a point in monotonic order
 - [Component Props Manifest](versioning/component-props-manifest.md) — immutable per-version prop manifest for `frontend_component` points (type, required, default, description)
 
 ## use-case-management
 - [Draft Use Case](use-case-management/draft-use-case.md) — org member authors a draft use case (new or revision of existing)
-- [Publish Use Case](use-case-management/publish-use-case.md) — draft promoted to immutable `use_cases` record, linked to a version
+- [Publish Use Case](use-case-management/publish-use-case.md) — revision draft promoted to immutable `use_cases` record; language-only, re-points attachments forward (brand-new drafts are promoted by the CLI version publish instead)
 - [Edit Use Case](use-case-management/edit-use-case.md) — edit creates a new draft with lineage + parent pointers; publish flow applies
-- [Remove Use Case from Version](use-case-management/remove-use-case-from-version.md) — removes use case from a version *(deferred — forward-propagation semantics unresolved)*
+- [Unpublish Use Case from Version](use-case-management/remove-use-case-from-version.md) — soft retraction of a use case claim from a published version; admin-visible, republishable
 
 ## connections
 - [Create Connection](connections/create-connection.md) — directed dependency edge between two point versions; acyclicity enforced at publish
@@ -94,6 +77,7 @@ Fully spec out the health scores system. Checklist:
 - [Search and Discover](search/search-and-discover.md) — typo-tolerant full-text search across points, domains, and use cases via Meilisearch
 
 ## sdk-cli
+- [`aleph.config.ts`](sdk-cli/aleph-config.md) — required root config: pointId, API/org, export entries, use case discovery globs; discovery only, use cases are files-only
 - [Publish Workflow](sdk-cli/publish-workflow.md) — end-to-end CLI publish flow: auth, preflight checks, detection, version assignment, demo artifact upload, commit
 - [Export Detection](sdk-cli/export-detection.md) — static analysis of named exports; reconciled against previous version's manifest
 - [`aleph reconcile-exports`](sdk-cli/export-rename-succession.md) — pre-publish interactive step; maps removed exports to renames or confirms deletions; writes mapping to `aleph.lock`

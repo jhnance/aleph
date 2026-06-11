@@ -9,7 +9,7 @@ An org member authors a draft use case for a point — either a brand-new use ca
 ## Acceptance Criteria
 
 - `POST /api/orgs/:orgSlug/points/:pointId/drafts` creates a new draft; accepts `title`, `content`, and an optional `lineageId`; requires an authenticated session with an active org
-- `lineageId = null` (or absent) means a brand-new use case; no `use_case_lineages` row needs to exist yet — the lineage is created at publish time
+- `lineageId = null` (or absent) means a brand-new use case: the server registers a `use_case_lineages` row at draft creation and sets it on the draft (2026-06-10). The returned lineage UUID is the use case's ID — the UI displays it ("Copy use case ID") for pasting into the codebase's `.aleph.ts`. The draft stays editable until a CLI version publish promotes it to the first content record; there is no UI publish for a brand-new use case
 - `lineageId = <uuid>` means a new content draft for an existing use case; the lineage must exist and belong to the same point, enforced by the compound FK `FOREIGN KEY (lineage_id, point_id) REFERENCES use_case_lineages (id, point_id)` on `draft_use_cases`; returns 400 if the lineage belongs to a different point or does not exist in the current org
 - Draft is inserted into `draft_use_cases` with `status = 'draft'`
 - `PATCH /api/orgs/:orgSlug/drafts/:draftId` accepts updated `title` and/or `content`; the draft must belong to the current org (direct `organization_id` column check); returns 404 if not found or not accessible

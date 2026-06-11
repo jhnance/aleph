@@ -4,9 +4,9 @@ status: To Do
 
 # `aleph new use-case`
 
-Scaffolds a new `.aleph.ts` file for a use case. Handles two creation flows: CLI-first (generates an ID and creates a draft record in Aleph) and Aleph-UI-first (scaffolds against an existing use case ID copied from the Aleph UI).
+Scaffolds a new `.aleph.ts` file for a use case. Handles two creation flows: CLI-first (generates an ID and registers the lineage in Aleph) and Aleph-UI-first (scaffolds against an existing use case ID copied from the Aleph UI).
 
-**Open question:** how the CLI-first flow represents the pre-publish state in Aleph needs to be resolved alongside the `draft_use_cases` schema — specifically, what ID the user copies from the Aleph UI in the Aleph-UI-first flow (the lineage doesn't exist until first publish, so a pre-generated UUID or draft ID is needed). See `decisions/2026-06-09.md`.
+**Resolved (2026-06-10):** the pre-publish state is a `use_case_lineages` row plus a mutable `draft_use_cases` row referencing it. Lineages carry no export scoping and no content, so registering one early is cheap and safe — it happens at *draft creation* (UI-first) or via this command (CLI-first); the generated/displayed UUID *is* the lineage id, and that is what goes in the `.aleph.ts` file. The draft stays freely editable in the UI (title, content) right up until a CLI version publish attaches the use case to a version — at which point the draft is promoted to the first immutable content record, demo included. There is no UI publish step for a brand-new use case: leaving draft state *is* the version+demo association, and that is the CLI's job.
 
 ## Acceptance Criteria
 
@@ -14,7 +14,7 @@ Scaffolds a new `.aleph.ts` file for a use case. Handles two creation flows: CLI
 
 - Invoked without `--id`; accepts optional `--title="..."`, `--export="<exportName>"`, and `--path="<relative/path>"` flags
 - Generates a UUID-based `id` for the new use case
-- Creates a draft record in Aleph via the API so the use case is visible and editable in the UI before first publish; the exact shape of this record (draft_use_cases row, pending lineage ID, etc.) is to be resolved with the draft_use_cases schema design
+- Registers the lineage in Aleph via the API (`use_case_lineages` row with the generated UUID) and creates a `draft_use_cases` row referencing it (title from `--title`, empty content), so the use case is visible and editable in the UI before first publish (2026-06-10)
 - Writes a `.aleph.ts` file at the specified path (or a sensible default derived from the title) pre-populated with the generated `id`, the provided `title`, the `export` field if given, and placeholder `demo` and `handlers` values
 - Prints the generated `id` and the path of the created file
 - Does NOT update `aleph.lock` — the user runs `aleph scan` after staging the new file

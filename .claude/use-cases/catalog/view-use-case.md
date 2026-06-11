@@ -18,7 +18,8 @@ A user views a use case: its title, content, the export it's scoped to (if any),
 - `GET /api/orgs/:orgSlug/use-cases/:useCaseId` (or lineage-addressed — decide which identity this page hangs off; lineage is the stable one)
 - Demo playback: `demo_artifact_url` points to an S3-hosted HTML/JS/CSS bundle with MSW handlers baked in — embedding/sandboxing model needed (iframe + CSP is the obvious starting point)
 - Edit history display: walk `parent_id` ancestry / group by `lineage_id` — presented as "edit history", not "lineage"
-- Demo absence is intended to be a **draft-only** state: moving a use case out of draft should force a version + demo association, so a published use case always has a playable demo. (Working position 2026-06-10 — must be reconciled with forward-propagated rows not copying demos, and with the UI draft→publish flow having no demo build path today; see the publish-knot session.) The draft view is where the "no demo yet" affordance and the `aleph new use-case --id=<id>` scaffold instruction live
+- Every version attachment has a demo (`demo_artifact_url` NOT NULL, decided 2026-06-10) — the "no demo" state exists only for use cases not yet attached to any version (drafts, and lineages awaiting their first CLI publish). That pre-attachment view is where the "no demo yet" affordance and the `aleph new use-case --id=<id>` scaffold instruction live
+- "Which versions it appears in" excludes unpublished attachments (`unpublished_at` set) in default views — see `use-case-management/remove-use-case-from-version.md`
 
 ## Open questions
 
