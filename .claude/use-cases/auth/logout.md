@@ -1,5 +1,7 @@
 ---
 status: To Do
+related:
+  - auth/magic-link-sign-in.md
 ---
 
 # Logout

@@ -1,5 +1,8 @@
 ---
 status: To Do
+related:
+  - use-case-management/draft-use-case.md
+  - use-case-management/publish-use-case.md
 ---
 
 # Edit Use Case
@@ -14,4 +17,4 @@ An org member edits a published use case. Because `use_cases` records are immuta
 - The resulting draft behaves identically to any other draft with a non-null `lineage_id`: it can be updated (`PATCH /api/orgs/:orgSlug/drafts/:draftId`), published (`POST /api/orgs/:orgSlug/drafts/:draftId/publish`), or deleted without affecting the published record
 - At publish time, the new `use_cases` row carries `parent_id` pointing to the most recent content record in the lineage at the time of publish (the head at publish time, which may differ from the record that initiated the edit if another edit was published in the interim); the publish flow locks the lineage row and re-points the lineage's attachments forward — see Publish Use Case for the replace-don't-add mechanics (2026-06-10)
 - Multiple in-flight edits to the same use case are permitted — multiple `draft_use_cases` rows may share the same `lineageId`; whichever is published first becomes the new head; subsequent ones record `parent_id` pointing to whichever head existed at their publish time (the lineage lock serializes these, so heads cannot fork)
-- Requires org role `member` or higher — `viewer` is read-only; insufficient role returns 403. The `:orgSlug` must match the session's active org; mismatch returns 403 (`org_context_mismatch`). Requests with no active org return 400; unauthenticated requests return 401
+- Requires org role `member` or higher — `viewer` is read-only; insufficient role returns 403. The org is resolved from `:orgSlug` by the per-request slug⋈membership query (2026-06-11, URL-org-authoritative); a user with no membership in that org gets 404 (tenant-hiding). Unauthenticated requests return 401

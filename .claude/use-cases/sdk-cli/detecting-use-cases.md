@@ -1,5 +1,10 @@
 ---
 status: To Do
+related:
+  - sdk-cli/aleph-new-use-case.md
+  - sdk-cli/aleph-scan.md
+  - sdk-cli/aleph-config.md
+  - sdk-cli/publish-workflow.md
 ---
 
 # Detecting Use Cases

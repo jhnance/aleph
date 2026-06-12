@@ -1,5 +1,8 @@
 ---
 status: To Do
+related:
+  - versioning/publish-point-version.md
+  - sdk-cli/props-extraction.md
 ---
 
 # Component Props Manifest
@@ -16,4 +19,4 @@ A published version of a `frontend_component` point carries a props manifest —
 - Requesting props for a non-`frontend_component` version returns 404
 - A `component_props` record cannot be deleted while any `point_version_component_props` row references it (`ON DELETE RESTRICT`)
 - The point must belong to the current org; returns 404 if not found
-- The `:orgSlug` must match the session's active org; mismatch returns 403 (`org_context_mismatch`). Requests with no active org return 400; unauthenticated requests return 401
+- The org is resolved from `:orgSlug` by the per-request slug⋈membership query (2026-06-11, URL-org-authoritative); a user with no membership in that org gets 404 (tenant-hiding). Unauthenticated requests return 401

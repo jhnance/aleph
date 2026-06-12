@@ -1,5 +1,9 @@
 ---
 status: To Do
+related:
+  - sdk-cli/export-detection.md
+  - sdk-cli/publish-workflow.md
+  - versioning/publish-point-version.md
 ---
 
 # Export Rename Succession
@@ -8,7 +12,7 @@ Runs before `aleph publish` as a pre-publish interactive step (`aleph reconcile-
 
 ## Acceptance Criteria
 
-- Requires an authenticated session and an active org; see CLI Auth use case
+- Requires an authenticated session; the org comes from the locally declared `org` slug (no "active org" state — see CLI Auth use case)
 - Requires `aleph.config.ts` at the project root; fetches the previous version's export manifest from the API and runs export detection against the entry file(s) to compute the current export set
 - A removed export is one present in the previous version's manifest but absent from the current export set
 - If there are no removed exports, the command exits 0 with a confirmation message and no changes to `aleph.lock`

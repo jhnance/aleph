@@ -1,5 +1,9 @@
 ---
 status: To Do
+related:
+  - sdk-cli/export-rename-succession.md
+  - sdk-cli/publish-workflow.md
+  - versioning/publish-point-version.md
 ---
 
 # Export Detection

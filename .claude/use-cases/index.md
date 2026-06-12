@@ -2,7 +2,7 @@
 
 Navigation index — one entry per use case file. Status lives in each file's frontmatter; this index is a read-only orientation layer. Regenerate at the start of any `/use-cases` session.
 
-Convention (2026-06-10): use case files that connect to other use cases declare those relationships in frontmatter via a `related:` list (paths relative to `use-cases/`). Backfill across older files is pending.
+Convention (2026-06-10): use case files that connect to other use cases declare those relationships in frontmatter via a `related:` list (paths relative to `use-cases/`). Backfill across older files completed 2026-06-12 (checklist 6.8) — every use case file now carries it.
 
 ## Planned sessions
 

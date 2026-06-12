@@ -1,5 +1,11 @@
 ---
 status: To Do
+related:
+  - versioning/publish-point-version.md
+  - auth/cli-auth.md
+  - sdk-cli/export-detection.md
+  - sdk-cli/export-rename-succession.md
+  - sdk-cli/detecting-use-cases.md
 ---
 
 # Publish Workflow

@@ -29,4 +29,4 @@ A directed connection is created between two point versions within the same org.
 - `POST /api/orgs/:orgSlug/connections` accepts `fromVersionId`, `toVersionId`, and `type = 'other'`; both versions must belong to the current org
 - `DELETE /api/orgs/:orgSlug/connections/:id` removes an `other` connection; only `other` type connections may be deleted via this endpoint — attempting to delete a `dependency` connection returns 400
 - Duplicate and self-connection constraints still apply; whether the acyclicity check applies to `other` connections is to be decided during implementation
-- Requires org role `member` or higher — `viewer` is read-only; insufficient role returns 403. The `:orgSlug` must match the session's active org; mismatch returns 403 (`org_context_mismatch`). Unauthenticated requests return 401; no active org returns 400
+- Requires org role `member` or higher — `viewer` is read-only; insufficient role returns 403. The org is resolved from `:orgSlug` by the per-request slug⋈membership query (2026-06-11, URL-org-authoritative); a user with no membership in that org gets 404 (tenant-hiding). Unauthenticated requests return 401

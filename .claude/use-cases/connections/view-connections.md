@@ -1,5 +1,9 @@
 ---
 status: To Do
+related:
+  - connections/create-connection.md
+  - connections/declare-dependencies.md
+  - catalog/ecosystem-map.md
 ---
 
 # View Connections
@@ -8,11 +12,11 @@ A user views the dependency graph for a specific point version — outgoing conn
 
 ## Acceptance Criteria
 
-- `GET /api/orgs/:orgSlug/versions/:versionId/connections` returns the connection graph for the specified version; requires an authenticated session with an active org
+- `GET /api/orgs/:orgSlug/versions/:versionId/connections` returns the connection graph for the specified version; requires an authenticated session
 - **Outgoing (dependencies):** rows in `connections` where `from_version_id = versionId`; each entry includes `toVersionId`, the target version's `versionSemantic`, the target point's `id` and `name`, and the connection `type`
 - **Incoming (dependents):** rows in `connections` where `to_version_id = versionId`; each entry includes `fromVersionId`, the source version's `versionSemantic`, the source point's `id` and `name`, and the connection `type`
 - The version must belong to the current org; returns 404 if not found or inaccessible
 - Returns 200 with `{ dependencies: [...], dependents: [...] }` even if both arrays are empty
 - Both `dependency` and `other` type connections are included in the response; the `type` field on each entry distinguishes them
 - Only direct connections are returned — transitive graph traversal is out of scope for this use case
-- The `:orgSlug` must match the session's active org; mismatch returns 403 (`org_context_mismatch`). Requests with no active org return 400; unauthenticated requests return 401
+- The org is resolved from `:orgSlug` by the per-request slug⋈membership query (2026-06-11, URL-org-authoritative); a user with no membership in that org gets 404 (tenant-hiding). Unauthenticated requests return 401

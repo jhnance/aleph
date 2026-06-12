@@ -246,16 +246,21 @@ Session outcome: per-command RLS policies on nullable-org tables; hybrid identit
 
 > Joshua: "We can walk through all of these in order at the end."
 
-- [ ] 6.1 `data-model.md` points at
-  `design/open-questions.md`, which is empty (open questions live in ALIGNMENT.md)
-- [ ] 6.2 `use-cases/index.md` still lists the title-push open question that 06-09 declared moot
-- [ ] 6.3 CLI output prints `version_monotonic`, an internal tiebreaker
-- [ ] 6.4 Domains have no rename / re-parent / archive story — record as a decision either way
-- [ ] 6.5 Multi-org CLI users are told to "set an active org" but no CLI org-switch command exists
-- [ ] 6.6
-  `cli-auth.md`'s Bearer-token + polling flow implies backend surface (device-code endpoint) no decision provides
-- [ ] 6.7 (carried from review) no index on `point_versions.predecessor_version_id`
-- [ ] 6.8 Backfill `related:` frontmatter across the older use case files *(code-review
-  annotation: "For use cases like this that connect to other use cases, we should add to the
-  frontmatter of each use case .md file those relationships" — convention established 2026-06-10;
-  new/edited files have it, older files pending)*
+All resolved 2026-06-12; decisions logged in `decisions/2026-06-12.md` (Phase 6 entries).
+
+- [x] 6.1 `data-model.md` points at `design/open-questions.md`, which is empty (open questions live in ALIGNMENT.md)
+  Done: removed the dangling "See the open question" link from `data-model.md`. `design/open-questions.md` is empty and superseded by ALIGNMENT.md — flagged for deletion (`rm design/open-questions.md`; Claude does not run shell).
+- [x] 6.2 `use-cases/index.md` still lists the title-push open question that 06-09 declared moot
+  Done: replaced the "one open question remaining" line with a note that it's moot — `aleph sync` went pull-only (2026-06-10), so there is no push target to decide.
+- [x] 6.3 CLI output prints `version_monotonic`, an internal tiebreaker
+  Done: dropped "monotonic version" from the `publish-workflow.md` success output; also removed `versionMonotonic` from the `view-version-history` API payload (server still orders by it; clients rely on array order). The tiebreaker is no longer surfaced to users.
+- [x] 6.4 Domains have no rename / re-parent / archive story — record as a decision either way *(Joshua: defer, record decision)*
+  Done: create-only for MVP; "Out of scope" note added to `create-domain.md` enumerating the design cost of each (slug-scope crossing, point cascade, slug mutability). Decision logged.
+- [x] 6.5 Multi-org CLI users are told to "set an active org" but no CLI org-switch command exists *(Joshua: full sweep now)*
+  Done: confirmed there is no CLI org-switch command and no "active org" state (org is `aleph.config.ts`-declared). Swept the ~20 API + CLI use-case files that still carried the pre-3.4 `org_context_mismatch` / "active org" / "org from JWT" language onto the canonical URL-org-authoritative form (per-request slug⋈membership query, 404 tenant-hiding). `create-organization.md` lost the obsolete `switchToOrg`/JWT-reissue machinery. Decision logged.
+- [x] 6.6 `cli-auth.md`'s Bearer-token + polling flow implies backend surface (device-code endpoint) no decision provides *(Joshua: design device-auth now)*
+  Done (transport): RFC 8628-shaped device flow reusing the magic-link machinery — `POST /api/auth/cli/start` + `POST /api/auth/cli/token` polling, device binding rides the existing `auth_codes` row (new `device_code_hash` + `device_consumed_at` columns + partial unique index in the DDL), `GET /api/auth/verify` unchanged. `cli-auth.md` rewritten; decision logged. **Open follow-up (newly surfaced):** silent approval-on-click is an account-takeover vector — the consent/`user_code` step is flagged as an open security question in `cli-auth.md` for a dedicated beat before the use case leaves To Do.
+- [x] 6.7 (carried from review) no index on `point_versions.predecessor_version_id`
+  Done: partial index `idx_point_version_predecessor ... WHERE predecessor_version_id IS NOT NULL` added (successor lookups walk `WHERE predecessor_version_id = $id`; first versions are NULL).
+- [x] 6.8 Backfill `related:` frontmatter across the older use case files *(code-review annotation: "For use cases like this that connect to other use cases, we should add to the frontmatter of each use case .md file those relationships" — convention established 2026-06-10; new/edited files have it, older files pending)*
+  Done: every use case file now carries `related:` frontmatter (28 backfilled; only the `index.md` nav file is exempt). `index.md`'s "backfill pending" note updated.
