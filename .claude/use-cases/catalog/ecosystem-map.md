@@ -1,5 +1,5 @@
 ---
-status: Stub
+status: To Do
 related:
   - catalog/browse-catalog.md
   - catalog/point-detail.md
@@ -8,18 +8,34 @@ related:
 
 # Ecosystem Map
 
-**Stub — created 2026-06-10 from the design review.** ALIGNMENT.md's opening promise ("a navigable map of their organization's ecosystem") had no corresponding use case. To be designed in an upcoming session.
+A user views a graph of a **domain's** points and the connections between them: points as nodes, point-level connection rollups as edges. MVP scope is domain-scoped only (2026-06-12); the org-wide graph and a focal-point "neighborhood" view (N hops out from one point) are deferred as additive views over the same response shape.
 
-A user views a graph visualization of their org's ecosystem: points as nodes, connections as edges, navigable by domain.
+## Acceptance Criteria
 
-## Scope sketch
+- `GET /api/orgs/:orgSlug/map?domainId=<id>` returns the whole graph in one response (never N calls to View Connections):
 
-- Data source: `connections` (version→version) aggregated to point level for the default view — the **latest version represents the point** (decided 2026-06-10, same rollup as `point-detail.md`)
-- Likely needs a dedicated graph endpoint (`GET /api/orgs/:orgSlug/map?domain=...`) returning nodes + edges in one response rather than N calls to `view-connections`
-- Scope control: org-wide graphs get unreadable fast — domain-scoped views and depth limits from a focal point are probably the MVP shape
-- This is a headline feature; even a modest first version (domain-scoped, direct edges only) beats none
+```json
+{
+  "nodes": [
+    { "pointId": "...", "name": "...", "type": "...", "status": "active",
+      "healthy": true, "domainId": "...", "inDomain": true }
+  ],
+  "edges": [
+    { "fromPointId": "...", "toPointId": "...", "type": "dependency",
+      "fromVersionId": "...", "toVersionId": "..." }
+  ]
+}
+```
 
-## Open questions
+- **Node set**: the domain's (and its descendant domains') active points, plus **boundary nodes** — points outside the domain that in-domain points connect to directly, marked `inDomain: false` and rendered distinctly. Cross-boundary edges are where the map earns its keep ("Checkout depends on three things owned by Platform")
+- **Edge derivation**: each in-domain point is represented by its representative version (latest release, same fallback rule as Point Detail); its outgoing connections resolve `to_version` → owning point; parallel edges collapse to one per `(fromPointId, toPointId, type)`, carrying the underlying version ids for tooltips/drill-in
+- `dependency` edges render directed; other connection types are visually distinct (legend); the response is plain node/edge lists so neither force-directed nor layered (dagre) rendering is precluded — rendering choice is an implementation decision
+- Deprecated/archived points are excluded (they're excluded from the default browse list for the same reason); revisit with a status param if a real need appears
+- The response includes `nodeCount`/`edgeCount`; an empty domain renders the map empty state with a create/onboarding nudge
+- Clicking a node navigates to Point Detail; clicking a boundary node navigates to its point (which may live in another domain — that's fine, points are org-visible)
+- Requires org role `viewer` or higher; 404 tenant-hiding; unauthenticated requests return 401
 
-- Rendering approach (force-directed vs. layered/dagre) — defer to implementation, but the response shape should not preclude either
-- Do `other`-type connections render differently from `dependency` edges?
+## Deferred (2026-06-12)
+
+- Org-wide graph (needs clustering/zoom to stay readable) and focal-point neighborhood view — both consume the same `nodes`/`edges` shape
+- In-map filtering (by type, health) — client-side over the same response when it comes
