@@ -1,22 +1,31 @@
 ---
 status: Stub
+related:
+  - sdk-cli/aleph-config.md
+  - connections/declare-dependencies.md
+  - domains/create-domain.md
+  - points/create-point.md
 ---
 
 # Bulk Onboarding (AI-driven)
 
-**Stub — created 2026-06-10 from the design review.** There was no story for onboarding an *existing* ecosystem — the target customer has hundreds of components, and the decided flows were one-point-at-a-time. Joshua's direction: "We can add this as a feature to the CLI. It would be AI-driven."
+**Deliberate stub (2026-06-12): direction decided, full design deferred until closer to need.**
 
-A CLI feature that scans an existing codebase (or monorepo) and proposes a set of points — names, types, domain suggestions, detected exports — which the user reviews and confirms before bulk creation in Aleph.
+Onboarding an existing ecosystem — the target customer has hundreds of components — without one-point-at-a-time entry.
 
-## Scope sketch
+## Decided direction (2026-06-12)
 
-- AI-driven analysis: walk the repo, identify candidate points (packages, apps, component directories), classify by type (`frontend_component` vs `custom`), detect frameworks from package metadata, propose names
-- Interactive review: present the proposal as a confirmable manifest (accept/edit/reject per candidate) — same confirm-before-write ethos as `aleph scan`
-- On confirmation: bulk-create points via the API; scaffold `aleph.config.ts` per project root
-- Monorepo handling: one config = one point = one project root is the current assumption — bulk onboarding is where that assumption gets stress-tested
-- Relationship to `declare-dependencies.md`: detected package-manager dependencies between onboarded points can seed connections once versions are published
+**Aleph does not run the AI.** Instead, Aleph provides **Skills documents** — instruction files users plug into their own AI workflows (Claude Code, Cursor, and similar) — that direct their tools to analyze the codebase for what Aleph is looking for: candidate points (packages, apps, component directories), type classification, framework detection from package metadata, proposed names, and domain groupings. Aleph-hosted inference is tabled until much later than MVP.
+
+The AI's output is an **onboarding manifest** the user reviews and edits. The CLI validates and applies the confirmed manifest — confirm-before-write, the same ethos as `aleph scan`: nothing AI-generated reaches the API without passing through human confirmation. The deterministic substrate stays in the CLI regardless of which AI tool produced the manifest: workspace/package detection cross-checks, `aleph.config.ts` scaffolding per project root, bulk creation via the API.
+
+## Sketch
+
+- Monorepo handling: one config = one point = one project root is the standing assumption — bulk onboarding is where it gets stress-tested
+- Detected package-manager dependencies between onboarded points can seed connections once versions are published (see `declare-dependencies.md`)
 
 ## Open questions
 
-- Where does the AI run — local model/API key brought by the user, or an Aleph-hosted service?
-- Does bulk onboarding also propose initial domains, or require them to exist first (current create-point flow requires a domain)?
+- Manifest format and `aleph onboard` apply semantics (transactional bulk create? resumable on partial failure?)
+- Does the manifest propose new domains, or only assign points to existing ones?
+- Skills document scope: one generic document, or per-ecosystem variants (pnpm monorepo, Nx, plain multi-repo)?

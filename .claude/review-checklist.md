@@ -148,9 +148,10 @@ Session outcome: per-command RLS policies on nullable-org tables; hybrid identit
   > Joshua: "Notable gaps; we should definitely stub these out and work on filling them out."
   Done (2026-06-12): all four promoted to designed use cases. Joshua's forks: tree-sidebar + point list; cross-version diff deferred; map domain-scoped only. Notables: representative-version fallback (latest-any-classification, badged); lineage-addressed use case page; demo sandboxing (separate registrable domain + `allow-scripts`-only iframe, access matrix per convention); map boundary nodes. Decision logged in `decisions/2026-06-12.md`; index updated. Version-notes TODO remains open in `point-detail.md`.
 
-- [ ] **4.3 AI-driven bulk onboarding (CLI)** *(annotation #16)* — stub created: `sdk-cli/bulk-onboarding.md`.
+- [x] **4.3 AI-driven bulk onboarding (CLI)** *(annotation #16)* — stub created: `sdk-cli/bulk-onboarding.md`.
   > Quoted text: "no story for onboarding an existing ecosystem (bulk import / repo scan vs. one-point-at-a-time)"
   > Joshua: "We can add this as a feature to the CLI. It would be AI-driven."
+  Done (2026-06-12) as a **deliberate stub**: Joshua's direction — Aleph ships Skills documents users plug into their own AI workflows (Claude Code, Cursor, etc.) to produce an onboarding manifest; the CLI validates/applies it confirm-before-write; Aleph-hosted inference tabled until well past MVP. Manifest format, apply semantics, and domain-proposal scope stay as open questions in the stub for a later session. Decision logged in `decisions/2026-06-12.md`.
 
 - [ ] **4.4 Connection/dependency authoring** *(annotation #17)* — stub created: `connections/declare-dependencies.md`.
   > Quoted text: "Spec it with the same care exports got."

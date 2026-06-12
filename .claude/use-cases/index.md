@@ -85,5 +85,5 @@ Fully spec out the health scores system. Checklist:
 - [`aleph new use-case`](sdk-cli/aleph-new-use-case.md) — scaffold a `.aleph.ts` file; CLI-first (generates ID + pending Aleph record) or Aleph-UI-first (scaffolds against existing ID)
 - [`aleph scan`](sdk-cli/aleph-scan.md) — update `aleph.lock` from codebase; confirms additions and removals interactively
 - [`aleph sync`](sdk-cli/aleph-sync.md) — pulls Aleph titles down to local `.aleph.ts` files; pull-only, titles are Aleph-authoritative (2026-06-10)
-- [Bulk Onboarding](sdk-cli/bulk-onboarding.md) — AI-driven repo scan proposing points for an existing ecosystem *(stub)*
+- [Bulk Onboarding](sdk-cli/bulk-onboarding.md) — Aleph-provided Skills docs guide the user's own AI tools to produce an onboarding manifest; CLI validates and applies *(deliberate stub, 2026-06-12)*
 - [Props Extraction](sdk-cli/props-extraction.md) — extract component props at publish (react-docgen / TS compiler API) *(stub)*
