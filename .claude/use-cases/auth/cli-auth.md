@@ -13,4 +13,4 @@ The CLI authenticates against the Aleph API before any operation that requires i
 - If no token is found and the process is attached to a TTY, the CLI initiates the magic link flow: prompts for the user's email, calls the magic link endpoint, and polls for the resulting JWT; on success, writes the token to `~/.aleph/credentials` and proceeds
 - If no token is found and the process is NOT attached to a TTY (CI environment), the CLI exits non-zero with a clear message instructing the user to set `ALEPH_TOKEN`
 - The credentials file is created with `chmod 600` permissions (owner read/write only)
-- The active org is resolved from the JWT payload (`active_organization_id`); if the JWT carries no active org, the CLI exits non-zero with instructions to set an active org
+- The org context comes from the locally declared `org` slug — API requests target `/api/orgs/:orgSlug/...` and the server verifies membership per request (2026-06-11; tokens carry no org claim). Whether `org` lives in `aleph.config.ts` or is CLI-populated into `aleph.lock` is pinned (see `aleph-config.md` open questions); if it is missing, the CLI exits non-zero pointing at where to declare it

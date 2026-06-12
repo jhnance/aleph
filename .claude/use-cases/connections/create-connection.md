@@ -1,5 +1,10 @@
 ---
 status: To Do
+related:
+  - connections/view-connections.md
+  - connections/declare-dependencies.md
+  - versioning/publish-point-version.md
+  - sdk-cli/publish-workflow.md
 ---
 
 # Create Connection
@@ -10,7 +15,7 @@ A directed connection is created between two point versions within the same org.
 
 ### `dependency` connections (publish-time, immutable)
 
-- `dependency` connections are created as part of the Publish Point Version flow — they are declared in the `connections` array of `POST /api/points/:id/versions` and committed atomically with the new version; the SDK/CLI is the entry point for this flow (see Publish Workflow use case)
+- `dependency` connections are created as part of the Publish Point Version flow — they are declared in the `connections` array of `POST /api/orgs/:orgSlug/points/:id/versions` and committed atomically with the new version; the SDK/CLI is the entry point for this flow (see Publish Workflow use case; the authoring path — how the CLI determines `toVersionId`s — is being designed in `declare-dependencies.md`)
 - `fromVersionId` is always the newly published version; `toVersionId` is the version being depended on
 - Both versions must belong to the current org; the compound FKs on `connections.organization_id` enforce this at the DB layer
 - A self-connection is rejected by the `CHECK (from_version_id != to_version_id)` constraint
@@ -21,7 +26,7 @@ A directed connection is created between two point versions within the same org.
 ### `other` connections (runtime, deletable)
 
 - `other` connections represent non-dependency relationships (e.g. "is related to", "supersedes") and can be created at runtime without publishing a new version
-- `POST /api/connections` accepts `fromVersionId`, `toVersionId`, and `type = 'other'`; both versions must belong to the current org
-- `DELETE /api/connections/:id` removes an `other` connection; only `other` type connections may be deleted via this endpoint — attempting to delete a `dependency` connection returns 400
+- `POST /api/orgs/:orgSlug/connections` accepts `fromVersionId`, `toVersionId`, and `type = 'other'`; both versions must belong to the current org
+- `DELETE /api/orgs/:orgSlug/connections/:id` removes an `other` connection; only `other` type connections may be deleted via this endpoint — attempting to delete a `dependency` connection returns 400
 - Duplicate and self-connection constraints still apply; whether the acyclicity check applies to `other` connections is to be decided during implementation
-- Unauthenticated requests return 401; no active org returns 400
+- Requires org role `member` or higher — `viewer` is read-only; insufficient role returns 403. The `:orgSlug` must match the session's active org; mismatch returns 403 (`org_context_mismatch`). Unauthenticated requests return 401; no active org returns 400

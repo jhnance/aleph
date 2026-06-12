@@ -27,20 +27,20 @@ No existing tool owns this space cleanly. Internal wikis go stale. Component lib
 - Infra: Docker, Kubernetes
 - Search: self-hosted Meilisearch
 - Auth: custom magic link / OTP — no third-party auth provider
-- Sessions: JWT (HS256, 30-day expiry); payload carries `user_id`, `active_organization_id`,
-  `jti`; stored in `HttpOnly` cookie; no DB lookup per request
-- Multi-org: users belong to multiple organizations; active org lives in the JWT, switchable per-session (Slack model)
-- Multi-tenancy: org-level isolation via PostgreSQL RLS (`SET LOCAL app.current_org_id` +
+- Sessions: JWT (HS256, 30-day expiry); payload is identity-only — `user_id`, `jti`, no org claim (2026-06-11); stored in an `HttpOnly; Secure; SameSite=Lax` cookie; signature verification needs no DB lookup; org-scoped routes membership-check the URL org per request (never cached). CSRF posture (2026-06-11): `Lax` + no state-changing GETs under cookie authority + `Origin`/JSON content-type checks on mutating routes
+- Multi-org: users belong to multiple organizations; org context comes from the URL path and is membership-checked per request (2026-06-11) — "switching" is navigation, tabs are independent, membership and role revocation bind on the next request
+- Multi-tenancy: org-level isolation via PostgreSQL RLS (`set_config('app.current_org_id', $1, true)` +
   `sql.reserve()`); two Postgres roles — `aleph_app` (RLS enforced) and
-  `aleph_service` (BYPASSRLS, migrations/seeding only)
+  `aleph_service` (BYPASSRLS, migrations/seeding only). Identity plane (2026-06-11): `auth_codes`/`users` RLS-exempt with documented app guards (unauthenticated flows); `organizations`/`organization_memberships` user-keyed via `app.current_user_id`
+- API routing: org-scoped resources are addressed under `/api/orgs/:orgSlug/...`; the SPA mirrors this (org slug in the URL path); the URL org is authoritative (2026-06-11); `/api/auth/*` and `POST /api/orgs` are global
+- Transactions are scoped to single units of DB work — no external IO while a transaction is open; RLS context is set per-transaction via helper; role-level timeouts (`statement`/`lock`/`idle_in_transaction`/`transaction`) enforce it server-side; long-running work runs async (queue/outbox mechanism decided with search dual-write); Postgres pinned ≥ 17 (2026-06-11)
+- Object storage: AWS S3 (demo artifacts; uploaded pre-publish via pre-signed URLs)
 - Token hashing: SHA-256 for magic link tokens (32 random bytes; bcrypt overhead unnecessary); HS256 for JWT signing
 - SDK/CLI: TypeScript-first; CLI published to npm; GitHub Actions marketplace workflows for golden-path publish flows; other-language SDKs post-MVP
 - Quality bar: production-ready patterns throughout — portfolio project, reviewed by prospective employers
+- Security mechanisms (RLS policies, role grants, auth checks) are designed with an explicit **access matrix** — command (SELECT/INSERT/UPDATE/DELETE or equivalent) × actor/row class — with every cell filled from the mechanism's documented semantics, not from intent, before the design lands in a doc (2026-06-11)
 
 ## Open questions
-
-**`removeUseCaseFromVersion` forward-propagation semantics**
-If a use case is removed from version 1.2, should it propagate forward (removing it from all later versions that inherited it), or only affect 1.2? Must be resolved before implementing — reversing this after launch is a breaking change.
 
 **Invite / org join flow**
 How does a user join an org? Options: admin sends an invite link, admin adds email directly, or user creates an org on first sign-in. Not yet designed.

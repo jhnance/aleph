@@ -2,6 +2,8 @@
 
 This document captures the significant design decisions made during the initial data model review, and the reasoning behind each. It is a companion to `data-model.md`.
 
+> **Note (2026-06-10):** Where this document conflicts with the dated logs in `.claude/decisions/`, the decision logs are authoritative. The sections below were brought current on 2026-06-10 after a review found four stale sections (isolation boundary, lineage uniqueness, export scoping, release-type flags).
+
 ---
 
 ## Discriminator column: enum over lookup table
@@ -44,13 +46,13 @@ For `use_cases`, `point_id` is denormalized from `use_case_lineages` (which is i
 
 ---
 
-## use_case_lineages: UNIQUE (point_id, export_id)
+## use_case_lineages: no per-(point, export) uniqueness
 
-A unique constraint was added to prevent two lineages from being created for the same `(point_id, export_id)` pair.
+*(Superseded 2026-06-08 — see `decisions/2026-06-08.md`.)* An earlier revision added `UNIQUE (point_id, export_id)` to prevent accidentally splitting one use case's history across two lineages. It was removed: the constraint inadvertently limited each export to **one** lineage, contradicting the definition of a use case as a single distinct behavior — an export can have many. Multiple lineages per export, and multiple point-level (`export_id IS NULL`) lineages per point, are all valid.
 
-**Why:** Without it, a race condition or application bug could silently split a use case's history across two lineage records with no recovery path.
+**Residual risk:** with the constraint gone, accidental history-splitting is possible again at the DB level — a duplicate lineage is now indistinguishable from the legitimate many-lineages-per-export case, so no constraint can catch it. The guard is application-level: lineages are created only in explicit flows (UI publish with `lineageId = null`, CLI scaffold with a pre-generated UUID), and the explicit-ID model in `.aleph.ts` files means the CLI never infers identity. What remains is a *user* accidentally authoring a duplicate use case — a product/duplicate-detection concern, not a schema one.
 
-**Note:** Postgres treats rows where `export_id IS NULL` as distinct under this constraint (NULL != NULL), so multiple point-level lineages per point are technically permitted. The export-scoping rule enforces that point-level lineages are only valid for points with no exports.
+*(2026-06-10: export scoping has since moved off lineages entirely — `use_case_lineages` has no `export_id`; scoping lives per-version on `point_version_use_cases`. The no-uniqueness conclusion above is unchanged.)*
 
 ---
 
@@ -64,11 +66,11 @@ A unique constraint was added to prevent two lineages from being created for the
 
 ---
 
-## Export-scoping rule: trigger on use_case_lineages
+## Export-scoping rule: per-version, on point_version_use_cases
 
-The rule "if a point has any version with exports, all its use case lineages must have a non-null export_id" is enforced by a BEFORE INSERT trigger rather than the SDK/CLI alone.
+*(History: the original point-level rule — "if a point has any version with exports, all its lineages must have a non-null `export_id`" — was removed 2026-06-08: it blocked legitimate point-level use cases on points that also have exports. The replacement, lineage-level `export_id` validated by a `BEFORE INSERT` trigger, was itself superseded 2026-06-10.)*
 
-**Simplification:** The original rule was version-specific ("if this version has exports"). Since `use_case_lineages` belongs to a point rather than a version, the enforceable equivalent is "if this point has any version with exports" — a slight overapproximation. In practice there is no valid scenario where a point has exports in some versions and needs a point-level (null export_id) lineage, so the overapproximation is correct.
+**Current rule:** export scoping is a column on `point_version_use_cases` (`export_id`, NULL = point-level in that version), not on the lineage — a lineage survives export renames with one identity. The version-level invariant (a scoped attachment's export must be in that version's manifest) is enforced declaratively by the compound FK to `point_version_exports`; no trigger (see `data-model.md`).
 
 ---
 
@@ -76,16 +78,16 @@ The rule "if a point has any version with exports, all its use case lineages mus
 
 `point_versions` carries `version_major INTEGER`, `version_minor INTEGER`, `version_patch INTEGER`, and `version_classification ENUM('release', 'prerelease', 'hotfix', 'metadata')` rather than relying on parsing `version_semantic` at query time.
 
-**Why:** Semver's `-` suffix has a precise spec meaning (pre-release, lower precedence than the release) that conflicts with how teams actually use it — hotfixes applied on top of a released version are semantically *higher* than that release, not lower. Inferring intent from the suffix string is not possible. An explicit classification stored at publish time makes the intent unambiguous and keeps forward-propagation queries simple.
+**Why:** Semver's `-` suffix has a precise spec meaning (pre-release, lower precedence than the release) that conflicts with how teams actually use it — hotfixes applied on top of a released version are semantically *higher* than that release, not lower. Inferring intent from the suffix string is not possible. An explicit classification stored at publish time makes the intent unambiguous and keeps version-ordering queries simple.
 
-**Classification rules enforced by the CLI:**
-- No suffix → `release` (implicit, no flag required)
-- `+` suffix → `metadata` (implicit, no flag required; `+` is build metadata per spec and is never intended for consumption in the same way a release is)
-- `-` suffix → requires `--is-prerelease` or `--is-hotfix`; error if omitted
+**Classification rules enforced by the CLI** (flags updated 2026-06-09: a single `--release-type=release|prerelease|hotfix|metadata` replaced the `--is-prerelease` / `--is-hotfix` pair — see `decisions/2026-06-09.md`):
+- No suffix → `release` (inferred, no flag required)
+- `+` suffix → `metadata` (inferred, no flag required; `+` is build metadata per spec and is never intended for consumption in the same way a release is)
+- `-` suffix → ambiguous between `prerelease` and `hotfix`; `--release-type` is required, error if omitted
 
-**Semantic ordering:** Forward propagation uses the composite key `(version_major, version_minor, version_patch, suffix_rank, version_monotonic)`, where `suffix_rank` is derived at query time: `metadata = 0`, `prerelease = 0`, `release = 1`, `hotfix = 2`. `version_monotonic` is the final tiebreaker — insertion order within the same `(major, minor, patch, classification)` bucket. The `--is-hotfix` flag is an explicit opt-in to non-spec ordering; `--is-prerelease` follows the spec. Within a classification bucket, publication order determines precedence — a deliberate simplification communicated to users.
+**Semantic ordering:** Predecessor resolution uses the composite key `(version_major, version_minor, version_patch, suffix_rank, version_monotonic)`, where `suffix_rank` is derived at query time: `metadata = 0`, `prerelease = 0`, `release = 1`, `hotfix = 2`. `version_monotonic` is the final tiebreaker — insertion order within the same `(major, minor, patch, classification)` bucket. `--release-type=hotfix` is an explicit opt-in to non-spec ordering; `prerelease` follows the spec. Within a classification bucket, publication order determines precedence — a deliberate simplification communicated to users.
 
-**predecessor_version_id:** The publish handler resolves the semantic predecessor once at publish time and stores it as `predecessor_version_id` on the new `point_versions` row. Forward propagation follows this FK directly rather than rerunning the composite key query. This also handles the edge case where a `prerelease` or `metadata` version is published after the release for the same patch already exists — the composite key query would incorrectly skip over that release (suffix_rank 0 < 1), so the handler short-circuits to it directly before falling through to the normal query. `ON DELETE RESTRICT` on the FK prevents removing a version that another version's propagation history depends on.
+**predecessor_version_id:** The publish handler resolves the semantic predecessor once at publish time and stores it as `predecessor_version_id` on the new `point_versions` row — version-tree metadata, used for display, succession reasoning, and language-edit forward re-pointing (it drives no use case copying; server-side forward propagation was removed 2026-06-10). This also handles the edge case where a `prerelease` or `metadata` version is published after the release for the same patch already exists — the composite key query would incorrectly skip over that release (suffix_rank 0 < 1), so the handler short-circuits to it directly before falling through to the normal query. `ON DELETE RESTRICT` on the FK prevents removing a version that another version's tree history depends on.
 
 **Why this over org-level configuration:** An org-level setting would create divergent versioning semantics across tenants on the same instance — two orgs interpreting the same version string differently. Per-publish intent keeps the behavior local and explicit.
 
@@ -105,27 +107,27 @@ Draft authoring is handled by a `draft_use_cases` table rather than a `status` c
 
 **Why:** Adding a status column that transitions (draft → active) would require UPDATEs to `use_cases`, directly conflicting with the immutability trigger. A separate mutable table keeps the two concerns cleanly separated: `draft_use_cases` is freely editable, `use_cases` is the immutable record of what was published.
 
-**Publish flow:** On publish, a new `use_case_lineages` row is created if needed, a `use_cases` row is inserted, the draft is linked to a version via `point_version_use_cases`, and the draft row is deleted.
+**Publish flow:** On publish, a new `use_case_lineages` row is created if needed, a `use_cases` row is inserted, and the draft row is deleted. Draft-publish is language-only (2026-06-10) — version attachments are created exclusively by the CLI version-publish payload; for existing lineages the new record is re-pointed forward onto existing attachments (see `publish-use-case.md`).
 
 **lineage_id is nullable:** A draft can exist before a lineage is created (new use case) or reference an existing lineage (new version of an existing use case). When non-null, a compound FK enforces that the lineage belongs to the same point.
 
 ---
 
-## Domains: first-class table and isolation boundary
+## Domains: first-class table
 
-A `domains` table was added as a first-class entity. Tenant isolation is scoped to the domain rather than the organization.
+A `domains` table was added as a first-class entity. *(An early draft of this section scoped tenant isolation to the domain; superseded 2026-06-06 — the isolation boundary is the **organization**. Domains are an organizational concept *within* a tenant, not the tenant boundary; domain-level memberships are an explicit post-MVP exclusion in ALIGNMENT.md.)*
 
-**Why:** The product model specifies that users are associated with domains (product areas), not just organizations. Domain-level isolation is more granular than org-level and is the correct boundary for access control.
+**Why:** The product model specifies domains as long-lived product areas, divorced from team structure, with optional nesting (sub-domains).
 
 **Org consistency:** `points.organization_id` is enforced consistent with `domains.organization_id` via the compound FK `FOREIGN KEY (domain_id, organization_id) REFERENCES domains (id, organization_id)`. This prevents a point from claiming an org that differs from its domain's org, without a trigger.
 
 ---
 
-## RLS: deferred pending user/membership model
+## RLS: org-level, fully specified in data-model.md
 
-Row-level security is acknowledged as the target for DB-layer tenant isolation but is not yet implemented. The isolation boundary is the domain.
+Row-level security is the DB-layer tenant isolation mechanism. The isolation boundary is the **organization** *(superseded 2026-06-06; an early draft said domain, with `domain_memberships` and `app.current_user_id` — none of that survived)*.
 
-**Prerequisites:** user table, `domain_memberships` join table, connection-level context (`SET LOCAL app.current_user_id`), and `domain_id` denormalized onto hub tables (`point_versions`, `use_case_lineages`) so policies can be written as direct column checks rather than multi-hop joins.
+**Prerequisites (all now specified in `data-model.md`):** `users` + `organization_memberships`; connection-level context — `sql.reserve()` + `SELECT set_config('app.current_org_id', $1, true)` per request; and `organization_id` denormalized onto all downstream tables so policies are direct column checks rather than multi-hop joins. Two roles: `aleph_app` (RLS enforced) and `aleph_service` (`BYPASSRLS`, migrations/seeding only).
 
 ---
 

@@ -8,7 +8,7 @@ An authenticated user creates a new organization. The creating user is automatic
 
 ## Acceptance Criteria
 
-- `POST /api/organizations` accepts `name`, `slug`, and an optional boolean `switchToOrg` (default: false); requires an authenticated session
+- `POST /api/orgs` accepts `name`, `slug`, and an optional boolean `switchToOrg` (default: false); requires an authenticated session (no org context needed — this is the one org-related route outside the `/api/orgs/:orgSlug/` scope, alongside `/api/auth/*`)
 - `slug` must be 1–50 characters and match `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`; returns 400 with a validation error if invalid
 - `slug` must be unique across all organizations (`UNIQUE (slug)` on `organizations`); returns 409 if already taken
 - Within a single transaction: inserts into `organizations`, then inserts into `organization_memberships` with `role = 'owner'` for the creating user

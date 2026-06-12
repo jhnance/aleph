@@ -12,9 +12,8 @@ CREATE TABLE organizations
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (slug),
     CHECK (char_length(slug) BETWEEN 1 AND 50),
-    CHECK (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
-)
-    );
+    CHECK (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$')
+);
 
 -- Local identity record. The source of truth for authentication is the magic
 -- link / session flow; this table stores only what is needed to identify a user
@@ -43,11 +42,16 @@ CREATE TABLE auth_codes
 );
 
 CREATE INDEX idx_auth_code_email ON auth_codes (email);
+-- Redemption queries by hash (UPDATE ... WHERE code_hash = $1); unique by construction
+-- (SHA-256 of 32 random bytes), so a unique index doubles as a collision guard.
+CREATE UNIQUE INDEX idx_auth_code_hash ON auth_codes (code_hash);
 
 -- No sessions table. Sessions are JWT-based: a signed HS256 JWT stored in an
--- HttpOnly cookie. The payload carries user_id, active_organization_id, and exp.
--- No DB lookup is required per request — the server verifies the signature only.
--- Org switching re-issues the JWT with the updated active_organization_id.
+-- HttpOnly cookie. The payload is identity-only (user_id, exp — no org claim,
+-- 2026-06-11): org context comes from the URL and is membership-checked per
+-- request, so org switching is plain navigation with no token re-issue, and
+-- membership revocation binds on the next request.
+-- Signature verification requires no DB lookup.
 -- Logout deletes the cookie client-side; tokens are valid until exp (30 days).
 -- A revoked_tokens table can be added later as an escape hatch for forced
 -- revocation in exceptional cases (security incidents, admin-forced logout).
@@ -85,8 +89,7 @@ CREATE TABLE domains
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (id, organization_id),
     CHECK (char_length(slug) BETWEEN 1 AND 50),
-    CHECK (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
-) ,
+    CHECK (slug ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'),
     CHECK (parent_id != id),
     FOREIGN KEY (parent_id, organization_id) REFERENCES domains (id, organization_id) ON DELETE RESTRICT
 );
@@ -126,7 +129,7 @@ CREATE INDEX idx_point_domain_id ON points (domain_id);
 
 CREATE TABLE frontend_frameworks
 (
-    id              INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id              UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
     organization_id UUID REFERENCES organizations (id) ON DELETE RESTRICT,
     name            VARCHAR(50) NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -303,30 +306,26 @@ CREATE INDEX idx_pve_export_id ON point_version_exports (export_id);
 
 -- The stable logical identity of a use case within a point. Created once when a
 -- use case is first introduced; never modified after creation. All content records
--- across the lifetime of a use case share the same `lineage_id`.
+-- across the lifetime of a use case share the same `lineage_id`. The lineage id IS
+-- the `id` in the use case's `.aleph.ts` file (UUIDs only, 2026-06-10).
 
--- `export_id` scopes the lineage to a specific export of the point. A `NULL`
--- `export_id` means the use case belongs to the point itself (used when the point
--- defines no exports). When non-null, the compound foreign key on
--- `(export_id, point_id)` enforces at the database level that the referenced export
--- belongs to the same point as the lineage. Postgres does not enforce a composite
--- FK when any participating column is `NULL`, so point-level lineages
--- (`export_id IS NULL`) are correctly exempt from this check.
+-- Lineages carry NO export scoping (moved to `point_version_use_cases`, 2026-06-10).
+-- Export scoping is a fact about a (version, use case) pair, not about the use
+-- case's identity: the same lineage attaches to export `CarouselItem` in v1.0.0 and
+-- to its confirmed successor `CarouselSlide` in v2.0.0 — the `.aleph.ts` file keeps
+-- its `id` through the rename, so the lineage must survive it too.
 CREATE TABLE use_case_lineages
 (
     id              UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
     point_id        UUID        NOT NULL,
     organization_id UUID        NOT NULL,
-    export_id       UUID,                -- NULL = point-level; non-null = export-scoped
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     FOREIGN KEY (point_id, organization_id) REFERENCES points (id, organization_id) ON DELETE RESTRICT,
-    FOREIGN KEY (export_id, point_id) REFERENCES point_exports (id, point_id),
     UNIQUE (id, point_id),
     UNIQUE (id, organization_id)
 );
 
 CREATE INDEX idx_use_case_lineage_point_id ON use_case_lineages (point_id);
-CREATE INDEX idx_use_case_lineage_export_id ON use_case_lineages (export_id);
 
 -- An immutable content record. Records are never updated in place; each edit
 -- creates a new row. Two columns drive history and diffing:
@@ -336,11 +335,10 @@ CREATE INDEX idx_use_case_lineage_export_id ON use_case_lineages (export_id);
 -- - `parent_id` — the derivation pointer. Tracks which specific record an edit
 --   was derived from, enabling ancestry walks and edit history display.
 
--- In the export rename succession flow (when a user confirms continuity between
--- two exports at publish time), new content records for the successor export may
--- carry a `parent_id` pointing to the last content record from the predecessor
--- export's lineage. This is the only case where `parent_id` crosses a lineage
--- boundary, and it is a deliberate outcome of an explicit user action.
+-- `parent_id` never crosses a lineage boundary. (An earlier design had export
+-- rename succession minting successor lineages with cross-lineage parents; with
+-- export scoping moved to `point_version_use_cases`, lineages survive renames and
+-- that case no longer exists — 2026-06-10.)
 
 -- `point_id` and `organization_id` are both denormalized from `use_case_lineages`
 -- and are safe because both tables are immutable after creation. They are carried
@@ -358,6 +356,7 @@ CREATE TABLE use_cases
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (id, point_id),
     UNIQUE (id, organization_id),
+    UNIQUE (id, lineage_id), -- FK target for point_version_use_cases (re-points stay in-lineage)
     FOREIGN KEY (lineage_id, point_id) REFERENCES use_case_lineages (id, point_id) ON DELETE RESTRICT,
     FOREIGN KEY (lineage_id, organization_id) REFERENCES use_case_lineages (id, organization_id) ON DELETE RESTRICT
 );
@@ -365,28 +364,67 @@ CREATE TABLE use_cases
 CREATE INDEX idx_use_case_lineage_id ON use_cases (lineage_id);
 CREATE INDEX idx_use_case_parent_id ON use_cases (parent_id);
 
--- Resolves the many-to-many relationship between `point_version` and `use_case`.
--- A pure associative table with no attributes of its own.
+-- One row = "this point version supports this use case" — the attachment the
+-- catalog displays. Rows are created exclusively by the version-publish payload
+-- (2026-06-10): there is no server-side forward propagation and no UI attachment
+-- path. A use case appears on a version because the CLI published it there, with a
+-- demo, at publish time.
 
--- `ON DELETE CASCADE` on `point_version`: removing a version removes its use case
--- associations. `ON DELETE RESTRICT` on `use_case`: a content record cannot be
--- deleted while any version still references it.
--- `point_id` is carried here to enable compound FKs that enforce both
--- `use_case` and `point_version` belong to the same point.
+-- `lineage_id` is denormalized from `use_cases` (safe: both columns immutable
+-- there). It buys two guarantees: `UNIQUE (point_version_id, lineage_id)` makes
+-- "two content records of one lineage on the same version" impossible, and content
+-- edits re-point an attachment to the new lineage head without joins
+-- (replace-don't-add). The FK on (use_case_id, lineage_id) pins the content record
+-- to the claimed lineage, so a re-point can never jump lineages.
+
+-- `export_id` records the export this use case is scoped to IN THIS VERSION
+-- (NULL = point-level). Scoping moved here from `use_case_lineages` (2026-06-10):
+-- it is a fact about the (version, use case) pair — lineage L attaches to
+-- `CarouselItem` in v1.0.0 and to `CarouselSlide` in v2.0.0 with one identity.
+-- The compound FK to `point_version_exports` enforces manifest presence
+-- declaratively (the export must be in this version's manifest), replacing the
+-- old trg_check_version_use_case_export_presence trigger. Postgres skips compound
+-- FK enforcement when export_id IS NULL, exempting point-level rows.
+
+-- `demo_artifact_url` is NOT NULL (2026-06-10): every attachment is born in a CLI
+-- publish that built the demo and uploaded it to S3 before the version POST. There
+-- is no demo-less attachment state — a UI-authored use case exists as lineage +
+-- content records only, until an engineer ships its `.aleph.ts` in a subsequent
+-- (possibly `metadata`-classified) version.
+
+-- `unpublished_at` is the soft-retraction mechanism (2026-06-10). NULL = visible.
+-- A claim that turns out false on a shipped version is unpublished — hidden from
+-- the version's visible use case list but retained, viewable by org admins in a
+-- dedicated view, and republishable by resetting to NULL. Attachment rows are
+-- never deleted by user action: you can't go back in time and change what was
+-- published, but you can retract the claim.
+
+-- Mutability is narrow (see amended immutability trigger below): only
+-- `use_case_id` (re-pointed forward on a lineage content edit) and
+-- `unpublished_at` may change.
 CREATE TABLE point_version_use_cases
 (
-    point_version_id UUID        NOT NULL,
-    use_case_id      UUID        NOT NULL,
-    point_id         UUID        NOT NULL,
-    organization_id  UUID        NOT NULL,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    point_version_id  UUID        NOT NULL,
+    use_case_id       UUID        NOT NULL,
+    lineage_id        UUID        NOT NULL,
+    export_id         UUID,                -- NULL = point-level in this version
+    point_id          UUID        NOT NULL,
+    organization_id   UUID        NOT NULL,
+    demo_artifact_url TEXT        NOT NULL,
+    unpublished_at    TIMESTAMPTZ,         -- NULL = published/visible
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (point_version_id, use_case_id),
+    UNIQUE (point_version_id, lineage_id),
     FOREIGN KEY (point_version_id, point_id) REFERENCES point_versions (id, point_id) ON DELETE CASCADE,
+    FOREIGN KEY (use_case_id, lineage_id) REFERENCES use_cases (id, lineage_id) ON DELETE RESTRICT,
     FOREIGN KEY (use_case_id, point_id) REFERENCES use_cases (id, point_id) ON DELETE RESTRICT,
+    FOREIGN KEY (lineage_id, point_id) REFERENCES use_case_lineages (id, point_id) ON DELETE RESTRICT,
+    FOREIGN KEY (point_version_id, export_id) REFERENCES point_version_exports (point_version_id, export_id) ON DELETE CASCADE,
     FOREIGN KEY (point_version_id, organization_id) REFERENCES point_versions (id, organization_id) ON DELETE CASCADE
 );
 
 CREATE INDEX idx_pvuc_use_case_id ON point_version_use_cases (use_case_id);
+CREATE INDEX idx_pvuc_lineage_id ON point_version_use_cases (lineage_id);
 
 CREATE TYPE connection_type AS ENUM ('dependency', 'other');
 
@@ -403,8 +441,7 @@ CREATE TABLE connections
     type            connection_type NOT NULL DEFAULT 'dependency',
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT now(),
     UNIQUE (from_version_id, to_version_id),
-    CHECK (from_version_id != to_version_id
-) ,
+    CHECK (from_version_id != to_version_id),
     FOREIGN KEY (from_version_id, organization_id) REFERENCES point_versions (id, organization_id) ON DELETE RESTRICT,
     FOREIGN KEY (to_version_id, organization_id) REFERENCES point_versions (id, organization_id) ON DELETE RESTRICT
 );
@@ -569,44 +606,16 @@ CREATE TRIGGER trg_point_version_exports_immutable
 
 **Export-scoping rule**
 
-`use_case_lineages.export_id` is nullable. `NULL` means the use case is point-level (describes the
-point as a whole, not any specific export); non-null means it is scoped to a specific export. Both are
-valid at any time, for any point, regardless of whether the point has declared exports.
+`point_version_use_cases.export_id` is nullable. `NULL` means the use case is point-level *in that
+version*; non-null scopes it to a specific export *in that version*. Both are valid at any time, for
+any point, regardless of whether the point has declared exports. (Scoping moved off
+`use_case_lineages` on 2026-06-10 so a lineage survives export renames with one identity.)
 
-The version-level invariant: if a lineage is export-scoped, the referenced export must be present in
-the specific version the use case is being associated with. Enforced by a trigger on
-`point_version_use_cases`:
-
-```sql
-CREATE OR REPLACE FUNCTION check_version_use_case_export_presence()
-RETURNS TRIGGER AS $$
-DECLARE
-    v_export_id UUID;
-BEGIN
-    -- Resolve the export_id of the lineage for the use case being associated
-    SELECT ucl.export_id INTO v_export_id
-    FROM use_cases uc
-    JOIN use_case_lineages ucl ON ucl.id = uc.lineage_id
-    WHERE uc.id = NEW.use_case_id;
-
-    -- Point-level use cases (export_id IS NULL) are always allowed
-    IF v_export_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM point_version_exports
-        WHERE point_version_id = NEW.point_version_id
-          AND export_id = v_export_id
-    ) THEN
-        RAISE EXCEPTION
-            'export % is not present in version %', v_export_id, NEW.point_version_id;
-    END IF;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_check_version_use_case_export_presence
-    BEFORE INSERT ON point_version_use_cases
-    FOR EACH ROW EXECUTE FUNCTION check_version_use_case_export_presence();
-```
+The version-level invariant — a scoped attachment's export must be present in that version's
+manifest — is enforced declaratively by the compound FK
+`FOREIGN KEY (point_version_id, export_id) REFERENCES point_version_exports (point_version_id, export_id)`.
+No trigger is needed (the former `trg_check_version_use_case_export_presence` is superseded);
+Postgres skips compound FK enforcement when `export_id IS NULL`, exempting point-level rows.
 
 **`use_case_lineages` immutability**
 
@@ -629,17 +638,34 @@ CREATE TRIGGER trg_use_case_lineages_immutable
     FOR EACH ROW EXECUTE FUNCTION enforce_use_case_lineages_immutable();
 ```
 
-**`point_version_use_cases` immutability**
+**`point_version_use_cases` near-immutability**
 
-Associative rows are written once and never updated — remove and re-insert instead. Enforced by trigger:
+Attachment rows are written once at version publish and never deleted by user action. Exactly two
+columns may change after insert (2026-06-10):
+
+- `use_case_id` — re-pointed to the new lineage head when a content edit is published
+  (replace-don't-add; the FK on `(use_case_id, lineage_id)` guarantees the re-point stays in-lineage)
+- `unpublished_at` — toggled by the unpublish/republish flow (soft retraction; see
+  `use-cases/use-case-management/remove-use-case-from-version.md`)
+
+Everything else is frozen by trigger:
 
 ```sql
 CREATE
 OR REPLACE FUNCTION enforce_point_version_use_cases_immutable()
 RETURNS TRIGGER AS $$
 BEGIN
-    RAISE
-EXCEPTION 'point_version_use_cases records are immutable and cannot be updated';
+    IF NEW.point_version_id IS DISTINCT FROM OLD.point_version_id
+        OR NEW.lineage_id IS DISTINCT FROM OLD.lineage_id
+        OR NEW.export_id IS DISTINCT FROM OLD.export_id
+        OR NEW.point_id IS DISTINCT FROM OLD.point_id
+        OR NEW.organization_id IS DISTINCT FROM OLD.organization_id
+        OR NEW.demo_artifact_url IS DISTINCT FROM OLD.demo_artifact_url
+        OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+        RAISE
+EXCEPTION 'point_version_use_cases rows are immutable except use_case_id (content re-point) and unpublished_at';
+END IF;
+RETURN NEW;
 END;
 $$
 LANGUAGE plpgsql;
@@ -694,7 +720,9 @@ CREATE TRIGGER trg_connections_immutable
 
 **Connection acyclicity**
 
-The schema does not prevent cycles (A → B → A). The publish workflow must detect and reject any connection that would introduce a cycle, using a recursive CTE graph walk before inserting.
+Cycles are not possible in the current design (2026-06-10). Connections are created only at version publish, and every edge originates at the brand-new version — which nothing can point to yet — so the version graph is a DAG by construction. (Mutual dependency between *points* is fine and is not a cycle: the version-level edges still only point backward in time.)
+
+Be mindful when introducing later features that could create edges between two *existing* versions (e.g. a manual UI connection editor, a backfill tool): any such path makes cycles constructible and must add a cycle check (recursive CTE walk) before insert.
 
 **Rename = new export lineage**
 
@@ -712,12 +740,18 @@ When an export name changes between versions, the SDK/CLI treats this as the end
    `used_at`.
 3. Server upserts the
    `users` row for that email (creates it on first sign-in, finds it on return). Issues a signed JWT (HS256) containing
-   `user_id`, `active_organization_id` (null if the user has no org yet), and
-   `exp` (30 days). Writes the JWT as an `HttpOnly` cookie.
-4. Every subsequent request: server verifies the JWT signature. No DB lookup required. The
-   `active_organization_id` from the payload is set as `app.current_org_id` for RLS.
-5. Org switching: server verifies the user is a member of the target org, re-issues the JWT with the updated
-   `active_organization_id`, replaces the cookie.
+   `user_id` and `exp` (30 days) — identity only, no org claim (2026-06-11). Writes the JWT as a cookie: `HttpOnly; Secure; SameSite=Lax; Path=/` (see *Session cookie attributes and CSRF*).
+4. Every subsequent request: server verifies the JWT signature (no DB lookup for verification). For
+   org-scoped routes (`/api/orgs/:orgSlug/...`) the **URL org is authoritative** (2026-06-11):
+   inside the request's transaction, set `app.current_user_id`, then resolve the slug and verify
+   membership in one indexed query —
+   `SELECT o.id, m.role FROM organizations o JOIN organization_memberships m ON m.organization_id = o.id AND m.user_id = $userId WHERE o.slug = $slug`
+   — then set `app.current_org_id` from the result. No row → 404 (tenant-hiding: non-member and
+   nonexistent are indistinguishable). The returned `role` drives role checks, so membership
+   *and role* changes bind on the next request. Never cache this check — caching reopens the
+   revocation gap it closes.
+5. Org switching: pure navigation to the target org's URL — no JWT re-issue, no cookie change;
+   multiple tabs can sit on different orgs simultaneously.
 6. Logout: delete the cookie client-side. The token remains technically valid until
    `exp` but the client no longer has it.
 
@@ -726,7 +760,6 @@ When an export name changes between versions, the SDK/CLI treats this as the end
 ```json
 {
   "sub": "<user_id>",
-  "org": "<active_organization_id | null>",
   "exp": "<unix timestamp, 30 days>",
   "iat": "<unix timestamp>",
   "jti": "<random id, for future revocation support>"
@@ -735,8 +768,50 @@ When an export name changes between versions, the SDK/CLI treats this as the end
 
 `sub` (subject), `exp` (expiration), `iat` (issued at), and
 `jti` (JWT ID) are all standard registered claim names per [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519). Using standard names means JWT libraries parse them automatically and they carry unambiguous meaning to any developer reading the token.
-`org` is a custom claim. `jti` is included now so that a
-`revoked_tokens` table can be added later without requiring a new token format.
+Every claim is a standard registered name — the former custom `org` claim was removed on 2026-06-11
+(org context is URL-borne and membership-checked per request, closing the revocation gap; see step 4
+above). `jti` is included now so that a
+`revoked_tokens` table can be added later without requiring a new token format — with the org claim
+gone, that table and JWT-secret rotation (global logout) are the escape hatches for *user-level*
+revocation only, the one revocation case the per-request membership check doesn't cover.
+
+### Session cookie attributes and CSRF (2026-06-11)
+
+The session JWT cookie is issued with `HttpOnly; Secure; SameSite=Lax; Path=/`.
+
+CSRF — a hostile site causing the victim's browser to fire a cookie-bearing request at our API — is
+mitigated by `SameSite=Lax`, which controls when the browser attaches the cookie to cross-site
+requests:
+
+| Cross-site request type                  | `Lax` sends the cookie? |
+|------------------------------------------|-------------------------|
+| Top-level GET navigation (clicked link)  | yes                     |
+| POST (form submit)                       | no                      |
+| fetch/XHR/img/iframe                     | no                      |
+
+The bottom two rows are the CSRF attack surface; `Lax` closes both. The top row is what keeps deep
+links shared in Slack or email working for signed-in users — `Strict` would greet them with a login
+page, and for a discovery tool, shared deep links are the product.
+
+`Lax` leans on one assumption, which is therefore load-bearing and recorded as a criterion: **no GET
+endpoint mutates state under the session cookie's authority.** All mutations are
+POST/PUT/PATCH/DELETE. The one state-changing GET, `/api/auth/verify`, derives no authority from the
+cookie (the emailed token is the credential), so a forged navigation to it gains nothing the
+attacker doesn't already hold.
+
+Defense-in-depth on mutating routes (per the [OWASP CSRF cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html)):
+verify the `Origin` header against the app origin when present, and accept only
+`Content-Type: application/json` — cross-site forms cannot produce that content type, and cross-site
+`fetch` carrying it triggers a CORS preflight that fails.
+
+Accepted residual risk — **login CSRF**: an attacker can top-level-navigate a victim's browser
+through the attacker's *own* magic link, silently signing the victim into the attacker's account.
+The payoff against a catalog tool is negligible, and the standard mitigation (CSRF-protecting the
+login itself) fights the magic-link UX. Documented, not mitigated. Logged in `SECURITY.md`, which
+also details the alternative password-auth design under which this risk would be cheaply mitigable.
+
+CLI authentication is unaffected: Bearer tokens are not attached by browsers, so no CSRF surface
+exists there.
 
 ### Hashing: why SHA-256 for auth codes
 
@@ -835,7 +910,9 @@ async function updateCustomPointType(
   `;
     // Returns nothing if the type doesn't exist OR belongs to another org.
     // Intentionally indistinct — avoids leaking whether the id exists at all.
-    if (!row) throw new ForbiddenError('Custom type not found or not owned by this organization');
+    // 404, not 403: tenant-hiding convention (2026-06-10) — 403 is reserved for
+    // authorization denials on resources the caller can legitimately see.
+    if (!row) throw new NotFoundError('Custom type not found');
 }
 
 async function deleteCustomPointType(sql: Sql, id: string, organizationId: string) {
@@ -844,7 +921,7 @@ async function deleteCustomPointType(sql: Sql, id: string, organizationId: strin
     WHERE id = ${id} AND organization_id = ${organizationId}
     RETURNING id
   `;
-    if (!row) throw new ForbiddenError('Custom type not found or not owned by this organization');
+    if (!row) throw new NotFoundError('Custom type not found');
 }
 
 // Called before INSERT INTO custom_points to enforce org-scoping.
@@ -871,10 +948,8 @@ Use cases are immutable once published. Draft authoring and approval are handled
 `use_cases` intact. A draft is promoted to
 `use_cases` at publish time; the draft row is then deleted or archived.
 
-`lineage_id` is nullable:
-`NULL` means the draft is for a brand-new use case (lineage is created at publish time); non-null means it is a new content draft for an existing use case. The compound FK
-`FOREIGN KEY (lineage_id, point_id) REFERENCES use_case_lineages (id, point_id)` enforces scope when non-null; Postgres skips enforcement when
-`lineage_id IS NULL`.
+`lineage_id` is `NOT NULL` (2026-06-10): every draft references a lineage from birth. For a brand-new use case the server registers the `use_case_lineages` row at draft creation — the lineage UUID is the use case's ID, shown in the UI for pasting into the codebase's `.aleph.ts`. For a revision the draft references the existing lineage. The compound FK
+`FOREIGN KEY (lineage_id, point_id) REFERENCES use_case_lineages (id, point_id)` enforces scope.
 
 Sketch:
 
@@ -883,16 +958,24 @@ CREATE TYPE draft_use_case_status AS ENUM ('draft', 'in_review');
 
 CREATE TABLE draft_use_cases
 (
-    id         UUID PRIMARY KEY               DEFAULT gen_random_uuid(),
-    point_id   UUID                  NOT NULL REFERENCES points (id) ON DELETE RESTRICT,
-    lineage_id UUID,
-    title      TEXT                  NOT NULL,
-    content    TEXT                  NOT NULL,
-    status     draft_use_case_status NOT NULL DEFAULT 'draft',
-    created_at TIMESTAMPTZ           NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ           NOT NULL DEFAULT now(),
+    id              UUID PRIMARY KEY               DEFAULT gen_random_uuid(),
+    point_id        UUID                  NOT NULL,
+    organization_id UUID                  NOT NULL,
+    lineage_id      UUID                  NOT NULL,
+    title           TEXT                  NOT NULL,
+    content         TEXT                  NOT NULL,
+    status          draft_use_case_status NOT NULL DEFAULT 'draft',
+    created_at      TIMESTAMPTZ           NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ           NOT NULL DEFAULT now(),
+    FOREIGN KEY (point_id, organization_id) REFERENCES points (id, organization_id) ON DELETE RESTRICT,
     FOREIGN KEY (lineage_id, point_id) REFERENCES use_case_lineages (id, point_id)
 );
+
+-- organization_id is denormalized here like every other downstream table (added
+-- 2026-06-10) — drafts are tenant-scoped AND mutable, so they need a direct-column
+-- RLS policy more than any immutable table does.
+CREATE INDEX idx_draft_use_case_organization_id ON draft_use_cases (organization_id);
+CREATE INDEX idx_draft_use_case_point_id ON draft_use_cases (point_id);
 
 CREATE TRIGGER trg_set_updated_at_draft_use_cases
     BEFORE UPDATE
@@ -900,15 +983,22 @@ CREATE TRIGGER trg_set_updated_at_draft_use_cases
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 ```
 
-Publish semantics: if `lineage_id IS NULL`, create a new
-`use_case_lineages` row first, then insert into `use_cases` with `parent_id = NULL`. If
-`lineage_id IS NOT NULL`, insert into `use_cases` with
-`parent_id` set to the current head of the lineage. In both cases, link the new
-`use_cases` row to the target version via `point_version_use_cases` and delete the draft.
+Publish semantics (2026-06-10 — the UI is a drafting surface; it never creates version
+attachments): UI draft-publish applies to **revisions only** (the lineage already has attachments) —
+lock the lineage (`SELECT ... FOR UPDATE` on the `use_case_lineages` row, serializing concurrent
+edit-publishes), insert into `use_cases` with `parent_id` set to the head at publish time, re-point
+the lineage's attachments on the edited version and its predecessor-tree descendants to the new
+record (`UPDATE point_version_use_cases SET use_case_id = ...`), and delete the draft. A
+**brand-new** use case's draft has no UI publish: it is promoted to the first content record by the
+CLI version publish that attaches it (version + demo at the moment it leaves draft state).
 
-**removeUseCaseFromVersion**
+**Unpublish / republish (formerly removeUseCaseFromVersion)**
 
-Not yet implemented. The semantic question of whether removal should forward-propagate (removing the use case from all later versions that still reference it) must be resolved before implementation, as changing this behavior post-launch is a breaking change in user-facing semantics.
+Resolved 2026-06-10. There is no hard removal and no cascade question — server-side forward
+propagation no longer exists, so every attachment row is independent. Retracting a claim from a
+published version sets `unpublished_at` on that one row (hidden from the version's visible list;
+retained; org admins see it in a dedicated view and may republish by resetting to NULL). See
+`use-cases/use-case-management/remove-use-case-from-version.md`.
 
 **Row-level security**
 
@@ -917,9 +1007,15 @@ The isolation boundary is the organization. RLS enforces that a request can only
 
 1. **User and membership model** — `users`, `organization_memberships`. ✅ Done.
 
-2. **Connection-level context** — At the start of each request, the Fastify `preHandler` calls
-   `sql.reserve()`, begins a transaction, and runs `SET LOCAL app.current_org_id = $1` using the
-   `active_organization_id` from the verified JWT. ✅ Done.
+2. **Connection-level context** — Every DB access goes through a helper that opens a transaction
+   and sets `app.current_user_id` (from the verified JWT) and `app.current_org_id` (resolved from
+   the URL slug by the per-request membership check — see step 4 of the magic link flow) as its
+   first statements (`set_config(..., true)` is transaction-local — identical semantics to
+   `SET LOCAL` — and accepts a bind parameter, which `SET` does not). The Fastify `preHandler` only verifies the
+   JWT and stashes the context; the transaction wraps one unit of DB work and nothing else — see
+   *Transaction scoping and statement timeouts* below. (Rewritten 2026-06-11: formerly a
+   request-spanning transaction opened in the preHandler via `sql.reserve()`, which welded
+   transaction lifetime to request lifetime, external IO included.) ✅ Done.
 
 3. **`organization_id` denormalized onto all downstream tables
    ** — so RLS policies are direct column checks with no multi-hop joins. ✅ Done.
@@ -948,18 +1044,126 @@ POLICY tenant_isolation ON points
 The `true` argument to
 `current_setting` returns NULL instead of raising an error when the variable is not set — which causes the policy to deny all access, a safe default.
 
-The policy shape for tables with nullable `organization_id` (platform-provided data):
+Tables with nullable `organization_id` (platform-provided data) need **per-command policies**
+(2026-06-11). A single `FOR ALL` policy is wrong here: `USING` governs which existing rows a
+command may *target* — including UPDATE and DELETE — and DELETE never consults `WITH CHECK` at all.
+A broad `USING` (platform + own rows) would let any tenant DELETE a platform row outright, or
+UPDATE one and set `organization_id` to its own org (which passes `WITH CHECK`), hijacking the row
+out from under every other tenant. Platform rows should be visible to reads and targetable by
+nothing else:
 
 ```sql
-CREATE
-POLICY tenant_isolation ON frontend_frameworks
-    USING (organization_id IS NULL OR organization_id = current_setting('app.current_org_id', true)::uuid)
+CREATE POLICY frameworks_select ON frontend_frameworks FOR SELECT
+    USING (organization_id IS NULL
+        OR organization_id = current_setting('app.current_org_id', true)::uuid);
+
+CREATE POLICY frameworks_insert ON frontend_frameworks FOR INSERT
     WITH CHECK (organization_id = current_setting('app.current_org_id', true)::uuid);
+
+CREATE POLICY frameworks_update ON frontend_frameworks FOR UPDATE
+    USING (organization_id = current_setting('app.current_org_id', true)::uuid)
+    WITH CHECK (organization_id = current_setting('app.current_org_id', true)::uuid);
+
+CREATE POLICY frameworks_delete ON frontend_frameworks FOR DELETE
+    USING (organization_id = current_setting('app.current_org_id', true)::uuid);
 ```
 
-`USING` (read) allows both platform and org rows.
-`WITH CHECK` (write) restricts writes to org-owned rows only — platform rows have
-`organization_id IS NULL`, which can never match a real org UUID.
+The same four-policy shape applies to `custom_point_types`. The access matrix (per the ALIGNMENT.md
+convention — every cell derived from documented `CREATE POLICY` semantics, not from intent):
+
+| Command | Own-org row | Platform row (`org IS NULL`)  | Other-org row           |
+|---------|-------------|-------------------------------|-------------------------|
+| SELECT  | visible     | visible                       | filtered out            |
+| INSERT  | allowed     | denied (`WITH CHECK` fails)   | denied (`WITH CHECK`)   |
+| UPDATE  | allowed     | denied (not a visible target) | denied (not a target)   |
+| DELETE  | allowed     | denied (not a visible target) | denied (not a target)   |
+
+Platform rows are seeded and maintained exclusively through `aleph_service` (`BYPASSRLS`); the
+application role has no path to them beyond SELECT.
+
+**Identity-plane (pre-org) tables**
+
+`auth_codes`, `users`, `organizations`, and `organization_memberships` exist before or outside any
+single org context, so the org-keyed policy cannot cover them. The posture is hybrid (2026-06-11),
+decided per table by what session context exists at the moment the table is touched:
+
+- **`auth_codes`, `users` — RLS-exempt, with documented app guards.** Both are touched by
+  unauthenticated flows (magic-link request and redemption), where no session variable exists to
+  key a policy on. The guards, all confined to the auth module: `auth_codes` is written only by the
+  link-request INSERT and consumed only by the atomic hash-keyed `UPDATE ... RETURNING`; `users` is
+  written only by the email upsert at redemption and read by `id = <JWT sub>` (self) or via an
+  active-org membership join (member lists). Neither table is ever queried with caller-supplied
+  identifiers beyond the code hash and the session's own ids.
+
+- **`organizations`, `organization_memberships` — user-keyed policies.** Every query against them is
+  authenticated, and their rows are the cross-tenant facts (who belongs to which org). Keyed on
+  `app.current_user_id`, set inside each request transaction alongside `app.current_org_id`:
+
+```sql
+-- Symmetric USING/WITH CHECK: the nullable-org hole above came from *asymmetric*
+-- clauses on a FOR ALL policy; with both clauses identical there is no
+-- broader-than-intended target surface.
+CREATE POLICY memberships_self_or_active_org ON organization_memberships
+    USING (user_id = current_setting('app.current_user_id', true)::uuid
+        OR organization_id = current_setting('app.current_org_id', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid
+        OR organization_id = current_setting('app.current_org_id', true)::uuid);
+
+CREATE POLICY orgs_select ON organizations FOR SELECT
+    USING (EXISTS (SELECT 1
+                   FROM organization_memberships m
+                   WHERE m.organization_id = organizations.id
+                     AND m.user_id = current_setting('app.current_user_id', true)::uuid));
+
+-- INSERT requires only an authenticated user: a membership-keyed WITH CHECK is
+-- impossible here, because the owner membership row FK-references the org row and
+-- therefore cannot exist when this policy evaluates. Any signed-in user may create
+-- an org; the same transaction inserts their owner membership immediately after.
+CREATE POLICY orgs_insert ON organizations FOR INSERT
+    WITH CHECK (current_setting('app.current_user_id', true) IS NOT NULL);
+
+CREATE POLICY orgs_update ON organizations FOR UPDATE
+    USING (EXISTS (SELECT 1
+                   FROM organization_memberships m
+                   WHERE m.organization_id = organizations.id
+                     AND m.user_id = current_setting('app.current_user_id', true)::uuid))
+    WITH CHECK (EXISTS (SELECT 1
+                        FROM organization_memberships m
+                        WHERE m.organization_id = organizations.id
+                          AND m.user_id = current_setting('app.current_user_id', true)::uuid));
+
+CREATE POLICY orgs_delete ON organizations FOR DELETE
+    USING (EXISTS (SELECT 1
+                   FROM organization_memberships m
+                   WHERE m.organization_id = organizations.id
+                     AND m.user_id = current_setting('app.current_user_id', true)::uuid));
+```
+
+The `EXISTS` subquery is itself subject to the memberships policy (RLS applies recursively; no
+recursion hazard — that policy doesn't reference `organizations`), and its user-id branch grants
+exactly the rows the subquery needs. Unset variables make `current_setting(..., true)` return NULL,
+which fails every comparison — default deny.
+
+Access matrices (every cell from documented `CREATE POLICY` semantics; actor is a session with
+`app.current_user_id = U`, `app.current_org_id = A`):
+
+| `organizations` | Org U belongs to | Org U doesn't belong to | No session vars set |
+|-----------------|------------------|-------------------------|---------------------|
+| SELECT          | visible          | filtered out            | denied              |
+| INSERT          | n/a (new row)    | allowed for any authenticated user | denied   |
+| UPDATE          | allowed (role checks stay app-layer) | not a visible target | denied |
+| DELETE          | allowed (role checks stay app-layer) | not a visible target | denied |
+
+| `organization_memberships` | Own row (`user_id = U`) | Row in active org A | Any other row | No session vars |
+|----------------------------|--------------------------|---------------------|---------------|-----------------|
+| all commands               | allowed                  | allowed (role checks stay app-layer) | denied / invisible | denied |
+
+Two flow-level consequences, both documented as acceptance criteria: the **login transaction** reads
+`organization_memberships` (to pick the JWT's default org) before any preHandler ran, so it must
+call `set_config('app.current_user_id', ...)` manually right after the user upsert (see
+`use-cases/auth/magic-link-sign-in.md`); and the **invite flow** (review checklist 4.1, not yet
+designed) must re-check the memberships INSERT branches when it lands — inserting a row for
+*another* user relies on the active-org branch.
 
 **Service role**
 
@@ -1008,6 +1212,74 @@ USER aleph_service_user WITH PASSWORD '...' IN ROLE aleph_service;
 The application's postgres.js instance connects as
 `aleph_app_user`. The migration runner connects as
 `aleph_service_user` via a separate connection string. These must never be swapped.
+
+**Transaction scoping and statement timeouts** (2026-06-11)
+
+The rule: **a transaction wraps one unit of DB work and nothing else** — no email, no S3, no
+search-engine calls, no other network IO while a transaction is open. An open transaction
+exclusively holds a pooled connection, holds its locks until commit (the publish flow's
+`FOR UPDATE` on the point row serializes publishes for that point), and pins vacuum's row-version
+horizon. Slow external work inside a transaction converts an external brownout into pool exhaustion
+and lock convoys — the `idle in transaction` failure mode. Long-running work is handled
+asynchronously; whether that's a job queue or a transactional outbox is decided together with the
+search dual-write question (review checklist 5.1).
+
+The RLS session context rides inside each transaction rather than a request-spanning one:
+
+```typescript
+async function withRequestContext<T>(
+    sql: Sql,
+    ctx: AuthContext,
+    fn: (tx: TransactionSql) => Promise<T>,
+): Promise<T> {
+    return sql.begin(async (tx) => {
+        // transaction-local (`true`) — reverts at commit/rollback, so a pooled
+        // connection can never leak one request's context into the next.
+        // Null context values are skipped, never written as empty strings:
+        // ''::uuid turns policy evaluation into a cast error instead of a clean deny.
+        await setContext(tx, ctx);
+        return fn(tx);
+    });
+}
+```
+
+- `sql.begin` pins one connection for the transaction's duration, which is all the former
+  `sql.reserve()` was for — per-request connection reservation is gone.
+- A request that needs atomicity across statements is *one* unit of work = one helper call. Two
+  helper calls are two independent commits — a choice made explicitly, never an accident.
+- External effects are ordered around the transaction: inputs before it (the publish payload's
+  upload-before-POST demo artifacts already comply), outputs after commit (magic-link email send,
+  Meilisearch indexing). A post-commit failure leaves committed DB state that must be harmless on
+  its own — e.g. an unused `auth_codes` row that simply expires.
+
+Server-enforced timeouts make the rule self-enforcing against code that violates it
+([PG client config](https://www.postgresql.org/docs/current/runtime-config-client.html)); set per
+role so they survive restarts and misconfigured clients:
+
+```sql
+ALTER ROLE aleph_app SET statement_timeout = '5s';
+ALTER ROLE aleph_app SET lock_timeout = '2s';
+ALTER ROLE aleph_app SET idle_in_transaction_session_timeout = '10s';
+ALTER ROLE aleph_app SET transaction_timeout = '30s'; -- PG 17+; Postgres is pinned >= 17
+
+-- Migrations are legitimately long-running:
+ALTER ROLE aleph_service SET statement_timeout = 0;
+ALTER ROLE aleph_service SET lock_timeout = 0;
+ALTER ROLE aleph_service SET idle_in_transaction_session_timeout = 0;
+ALTER ROLE aleph_service SET transaction_timeout = 0;
+```
+
+| Setting | What it kills |
+|---------|---------------|
+| `statement_timeout` | a single runaway query (its budget includes lock-wait time) |
+| `lock_timeout` | waiting too long behind another transaction's lock — kept below `statement_timeout` so contention fails with a lock error, not a generic timeout |
+| `idle_in_transaction_session_timeout` | the scoping rule's enforcer: a transaction idle because code is awaiting non-DB work gets killed server-side |
+| `transaction_timeout` | total transaction lifetime — the backstop (the reason Postgres is pinned ≥ 17) |
+
+Heavy operations raise their budget transaction-locally, never globally: the publish transaction's
+first statement runs `SET LOCAL statement_timeout = '15s'`. The numbers are starting points to tune
+against reality; the structure — role-level defaults, `SET LOCAL` overrides, idle-in-transaction as
+the enforcer — is the decision.
 
 **`organization_id` propagation to downstream tables**
 
