@@ -3,7 +3,10 @@ status: To Do
 related:
   - domains/create-domain.md
   - point-types/list-point-types.md
+  - point-types/create-custom-point-type.md
   - versioning/publish-point-version.md
+  - use-case-management/draft-use-case.md
+  - sdk-cli/export-detection.md
 ---
 
 # Create Point

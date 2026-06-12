@@ -4,6 +4,8 @@ related:
   - health-checks/health-score.md
   - catalog/browse-catalog.md
   - catalog/point-detail.md
+  - connections/view-connections.md
+  - connections/declare-dependencies.md
 ---
 
 # Evaluate Point Health
