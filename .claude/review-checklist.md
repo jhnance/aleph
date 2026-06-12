@@ -114,13 +114,15 @@ Session outcome: the knot dissolved when Joshua identified server-side forward p
 
 ## Phase 3 — Interactive session: security deep dive
 
-- [s] **3.1 RLS policy hole on nullable-org tables** *(annotation #8)*
+- [x] **3.1 RLS policy hole on nullable-org tables** *(annotation #8)*
   > Quoted text: "The decided RLS policy on nullable-org tables lets any tenant hijack or delete platform rows... Recommendation: split into per-command policies — FOR SELECT allows platform + own rows; FOR UPDATE/DELETE restrict both USING and WITH CHECK to own-org rows only."
   > Joshua: "I'm gonna need a dedicated deep dive interactive session with you on this one. Add it to our checklist."
+  Done (2026-06-11): per-command policies adopted as recommended (`data-model.md`, RLS section, with access matrix). Considered and rejected: separate platform/tenant tables (dual-FK tax on `frontend_components.framework` / `custom_points.custom_type_id`). Process outcome: access-matrix convention for security mechanisms added to ALIGNMENT.md. Decisions logged in `decisions/2026-06-11.md`.
 
-- [s] **3.2 RLS for pre-org tables + SameSite/CSRF walkthrough** *(annotation #12)*
+- [x] **3.2 RLS for pre-org tables + SameSite/CSRF walkthrough** *(annotation #12)*
   > Quoted text: "decide exempt-with-documented-app-guards or user-keyed policies. (c) No SameSite/CSRF decision anywhere despite cookie-borne sessions — likely one line (SameSite=Lax + Secure), but decide it."
   > Joshua: "Walk me through these two more thoroughly?"
+  Done (2026-06-11): hybrid — `auth_codes`+`users` exempt with documented app guards (their flows run unauthenticated; nothing to key a policy on), `organizations`+`organization_memberships` user-keyed via new `app.current_user_id` session var (org INSERT requires only an authenticated user — the owner membership row can't precede the org row). Cookie: `HttpOnly; Secure; SameSite=Lax; Path=/` + no state-changing GETs under cookie authority + `Origin`/JSON content-type checks; login CSRF accepted and documented. Access matrices per the new convention. Updated: `data-model.md` (RLS + new cookie/CSRF section), `magic-link-sign-in.md`, ALIGNMENT.md; decisions logged in `decisions/2026-06-11.md`.
 
 - [s] **3.3 Transaction scoping how-to** *(annotation #31)*
   > Quoted text: "scope the transaction to DB work and set statement timeouts"

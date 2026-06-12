@@ -739,7 +739,7 @@ When an export name changes between versions, the SDK/CLI treats this as the end
 3. Server upserts the
    `users` row for that email (creates it on first sign-in, finds it on return). Issues a signed JWT (HS256) containing
    `user_id`, `active_organization_id` (null if the user has no org yet), and
-   `exp` (30 days). Writes the JWT as an `HttpOnly` cookie.
+   `exp` (30 days). Writes the JWT as a cookie: `HttpOnly; Secure; SameSite=Lax; Path=/` (see *Session cookie attributes and CSRF*).
 4. Every subsequent request: server verifies the JWT signature. No DB lookup required. The
    `active_organization_id` from the payload is set as `app.current_org_id` for RLS.
 5. Org switching: server verifies the user is a member of the target org, re-issues the JWT with the updated
@@ -763,6 +763,44 @@ When an export name changes between versions, the SDK/CLI treats this as the end
 `jti` (JWT ID) are all standard registered claim names per [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519). Using standard names means JWT libraries parse them automatically and they carry unambiguous meaning to any developer reading the token.
 `org` is a custom claim. `jti` is included now so that a
 `revoked_tokens` table can be added later without requiring a new token format.
+
+### Session cookie attributes and CSRF (2026-06-11)
+
+The session JWT cookie is issued with `HttpOnly; Secure; SameSite=Lax; Path=/`.
+
+CSRF — a hostile site causing the victim's browser to fire a cookie-bearing request at our API — is
+mitigated by `SameSite=Lax`, which controls when the browser attaches the cookie to cross-site
+requests:
+
+| Cross-site request type                  | `Lax` sends the cookie? |
+|------------------------------------------|-------------------------|
+| Top-level GET navigation (clicked link)  | yes                     |
+| POST (form submit)                       | no                      |
+| fetch/XHR/img/iframe                     | no                      |
+
+The bottom two rows are the CSRF attack surface; `Lax` closes both. The top row is what keeps deep
+links shared in Slack or email working for signed-in users — `Strict` would greet them with a login
+page, and for a discovery tool, shared deep links are the product.
+
+`Lax` leans on one assumption, which is therefore load-bearing and recorded as a criterion: **no GET
+endpoint mutates state under the session cookie's authority.** All mutations are
+POST/PUT/PATCH/DELETE. The one state-changing GET, `/api/auth/verify`, derives no authority from the
+cookie (the emailed token is the credential), so a forged navigation to it gains nothing the
+attacker doesn't already hold.
+
+Defense-in-depth on mutating routes (per the [OWASP CSRF cheat sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html)):
+verify the `Origin` header against the app origin when present, and accept only
+`Content-Type: application/json` — cross-site forms cannot produce that content type, and cross-site
+`fetch` carrying it triggers a CORS preflight that fails.
+
+Accepted residual risk — **login CSRF**: an attacker can top-level-navigate a victim's browser
+through the attacker's *own* magic link, silently signing the victim into the attacker's account.
+The payoff against a catalog tool is negligible, and the standard mitigation (CSRF-protecting the
+login itself) fights the magic-link UX. Documented, not mitigated. Logged in `SECURITY.md`, which
+also details the alternative password-auth design under which this risk would be cheaply mitigable.
+
+CLI authentication is unaffected: Bearer tokens are not attached by browsers, so no CSRF surface
+exists there.
 
 ### Hashing: why SHA-256 for auth codes
 
@@ -959,10 +997,11 @@ The isolation boundary is the organization. RLS enforces that a request can only
 1. **User and membership model** — `users`, `organization_memberships`. ✅ Done.
 
 2. **Connection-level context** — At the start of each request, the Fastify `preHandler` calls
-   `sql.reserve()`, begins a transaction, and runs `SELECT set_config('app.current_org_id', $1, true)`
-   using the `active_organization_id` from the verified JWT. (`set_config(..., true)` is
-   transaction-local — identical semantics to `SET LOCAL` — and accepts a bind parameter,
-   which `SET` does not.) ✅ Done.
+   `sql.reserve()`, begins a transaction, and runs
+   `SELECT set_config('app.current_org_id', $1, true), set_config('app.current_user_id', $2, true)`
+   using the `org` and `sub` claims from the verified JWT (`app.current_user_id` added 2026-06-11
+   for the user-keyed identity-plane policies). (`set_config(..., true)` is transaction-local —
+   identical semantics to `SET LOCAL` — and accepts a bind parameter, which `SET` does not.) ✅ Done.
 
 3. **`organization_id` denormalized onto all downstream tables
    ** — so RLS policies are direct column checks with no multi-hop joins. ✅ Done.
@@ -991,18 +1030,126 @@ POLICY tenant_isolation ON points
 The `true` argument to
 `current_setting` returns NULL instead of raising an error when the variable is not set — which causes the policy to deny all access, a safe default.
 
-The policy shape for tables with nullable `organization_id` (platform-provided data):
+Tables with nullable `organization_id` (platform-provided data) need **per-command policies**
+(2026-06-11). A single `FOR ALL` policy is wrong here: `USING` governs which existing rows a
+command may *target* — including UPDATE and DELETE — and DELETE never consults `WITH CHECK` at all.
+A broad `USING` (platform + own rows) would let any tenant DELETE a platform row outright, or
+UPDATE one and set `organization_id` to its own org (which passes `WITH CHECK`), hijacking the row
+out from under every other tenant. Platform rows should be visible to reads and targetable by
+nothing else:
 
 ```sql
-CREATE
-POLICY tenant_isolation ON frontend_frameworks
-    USING (organization_id IS NULL OR organization_id = current_setting('app.current_org_id', true)::uuid)
+CREATE POLICY frameworks_select ON frontend_frameworks FOR SELECT
+    USING (organization_id IS NULL
+        OR organization_id = current_setting('app.current_org_id', true)::uuid);
+
+CREATE POLICY frameworks_insert ON frontend_frameworks FOR INSERT
     WITH CHECK (organization_id = current_setting('app.current_org_id', true)::uuid);
+
+CREATE POLICY frameworks_update ON frontend_frameworks FOR UPDATE
+    USING (organization_id = current_setting('app.current_org_id', true)::uuid)
+    WITH CHECK (organization_id = current_setting('app.current_org_id', true)::uuid);
+
+CREATE POLICY frameworks_delete ON frontend_frameworks FOR DELETE
+    USING (organization_id = current_setting('app.current_org_id', true)::uuid);
 ```
 
-`USING` (read) allows both platform and org rows.
-`WITH CHECK` (write) restricts writes to org-owned rows only — platform rows have
-`organization_id IS NULL`, which can never match a real org UUID.
+The same four-policy shape applies to `custom_point_types`. The access matrix (per the ALIGNMENT.md
+convention — every cell derived from documented `CREATE POLICY` semantics, not from intent):
+
+| Command | Own-org row | Platform row (`org IS NULL`)  | Other-org row           |
+|---------|-------------|-------------------------------|-------------------------|
+| SELECT  | visible     | visible                       | filtered out            |
+| INSERT  | allowed     | denied (`WITH CHECK` fails)   | denied (`WITH CHECK`)   |
+| UPDATE  | allowed     | denied (not a visible target) | denied (not a target)   |
+| DELETE  | allowed     | denied (not a visible target) | denied (not a target)   |
+
+Platform rows are seeded and maintained exclusively through `aleph_service` (`BYPASSRLS`); the
+application role has no path to them beyond SELECT.
+
+**Identity-plane (pre-org) tables**
+
+`auth_codes`, `users`, `organizations`, and `organization_memberships` exist before or outside any
+single org context, so the org-keyed policy cannot cover them. The posture is hybrid (2026-06-11),
+decided per table by what session context exists at the moment the table is touched:
+
+- **`auth_codes`, `users` — RLS-exempt, with documented app guards.** Both are touched by
+  unauthenticated flows (magic-link request and redemption), where no session variable exists to
+  key a policy on. The guards, all confined to the auth module: `auth_codes` is written only by the
+  link-request INSERT and consumed only by the atomic hash-keyed `UPDATE ... RETURNING`; `users` is
+  written only by the email upsert at redemption and read by `id = <JWT sub>` (self) or via an
+  active-org membership join (member lists). Neither table is ever queried with caller-supplied
+  identifiers beyond the code hash and the session's own ids.
+
+- **`organizations`, `organization_memberships` — user-keyed policies.** Every query against them is
+  authenticated, and their rows are the cross-tenant facts (who belongs to which org). Keyed on
+  `app.current_user_id`, set by the preHandler alongside `app.current_org_id`:
+
+```sql
+-- Symmetric USING/WITH CHECK: the nullable-org hole above came from *asymmetric*
+-- clauses on a FOR ALL policy; with both clauses identical there is no
+-- broader-than-intended target surface.
+CREATE POLICY memberships_self_or_active_org ON organization_memberships
+    USING (user_id = current_setting('app.current_user_id', true)::uuid
+        OR organization_id = current_setting('app.current_org_id', true)::uuid)
+    WITH CHECK (user_id = current_setting('app.current_user_id', true)::uuid
+        OR organization_id = current_setting('app.current_org_id', true)::uuid);
+
+CREATE POLICY orgs_select ON organizations FOR SELECT
+    USING (EXISTS (SELECT 1
+                   FROM organization_memberships m
+                   WHERE m.organization_id = organizations.id
+                     AND m.user_id = current_setting('app.current_user_id', true)::uuid));
+
+-- INSERT requires only an authenticated user: a membership-keyed WITH CHECK is
+-- impossible here, because the owner membership row FK-references the org row and
+-- therefore cannot exist when this policy evaluates. Any signed-in user may create
+-- an org; the same transaction inserts their owner membership immediately after.
+CREATE POLICY orgs_insert ON organizations FOR INSERT
+    WITH CHECK (current_setting('app.current_user_id', true) IS NOT NULL);
+
+CREATE POLICY orgs_update ON organizations FOR UPDATE
+    USING (EXISTS (SELECT 1
+                   FROM organization_memberships m
+                   WHERE m.organization_id = organizations.id
+                     AND m.user_id = current_setting('app.current_user_id', true)::uuid))
+    WITH CHECK (EXISTS (SELECT 1
+                        FROM organization_memberships m
+                        WHERE m.organization_id = organizations.id
+                          AND m.user_id = current_setting('app.current_user_id', true)::uuid));
+
+CREATE POLICY orgs_delete ON organizations FOR DELETE
+    USING (EXISTS (SELECT 1
+                   FROM organization_memberships m
+                   WHERE m.organization_id = organizations.id
+                     AND m.user_id = current_setting('app.current_user_id', true)::uuid));
+```
+
+The `EXISTS` subquery is itself subject to the memberships policy (RLS applies recursively; no
+recursion hazard — that policy doesn't reference `organizations`), and its user-id branch grants
+exactly the rows the subquery needs. Unset variables make `current_setting(..., true)` return NULL,
+which fails every comparison — default deny.
+
+Access matrices (every cell from documented `CREATE POLICY` semantics; actor is a session with
+`app.current_user_id = U`, `app.current_org_id = A`):
+
+| `organizations` | Org U belongs to | Org U doesn't belong to | No session vars set |
+|-----------------|------------------|-------------------------|---------------------|
+| SELECT          | visible          | filtered out            | denied              |
+| INSERT          | n/a (new row)    | allowed for any authenticated user | denied   |
+| UPDATE          | allowed (role checks stay app-layer) | not a visible target | denied |
+| DELETE          | allowed (role checks stay app-layer) | not a visible target | denied |
+
+| `organization_memberships` | Own row (`user_id = U`) | Row in active org A | Any other row | No session vars |
+|----------------------------|--------------------------|---------------------|---------------|-----------------|
+| all commands               | allowed                  | allowed (role checks stay app-layer) | denied / invisible | denied |
+
+Two flow-level consequences, both documented as acceptance criteria: the **login transaction** reads
+`organization_memberships` (to pick the JWT's default org) before any preHandler ran, so it must
+call `set_config('app.current_user_id', ...)` manually right after the user upsert (see
+`use-cases/auth/magic-link-sign-in.md`); and the **invite flow** (review checklist 4.1, not yet
+designed) must re-check the memberships INSERT branches when it lands — inserting a row for
+*another* user relies on the active-org branch.
 
 **Service role**
 
