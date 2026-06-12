@@ -143,9 +143,10 @@ Session outcome: per-command RLS policies on nullable-org tables; hybrid identit
   > Joshua: "Agreed; add it to a checklist."
   Done (2026-06-12): consent-gated invitations reusing the magic-link machinery (Joshua's forks: invitation-only; explicit accept surfaced at sign-in; admin+ invites; inviter picks role, owner excluded; domain auto-join deferred post-MVP). `org_invitations` DDL + three-plane RLS policy (capability-keyed redemption branch) + access matrix in `data-model.md`; `invite-flow.md` fully specced; magic-link redirects surface pending invites; ALIGNMENT.md open question closed; decision logged in `decisions/2026-06-12.md`. Resolves the 3.2 memberships-INSERT follow-up (insert happens as the invitee — user-id branch).
 
-- [ ] **4.2 Read-path use cases** *(annotation #15)* — stubs created: `catalog/browse-catalog.md`, `catalog/point-detail.md`, `catalog/view-use-case.md`, `catalog/ecosystem-map.md`.
+- [x] **4.2 Read-path use cases** *(annotation #15)* — stubs created: `catalog/browse-catalog.md`, `catalog/point-detail.md`, `catalog/view-use-case.md`, `catalog/ecosystem-map.md`.
   > Quoted text: "There is no use case for browsing domains, listing points, a point detail page, viewing a use case's content, playing a demo_artifact_url, or any map/graph view"
   > Joshua: "Notable gaps; we should definitely stub these out and work on filling them out."
+  Done (2026-06-12): all four promoted to designed use cases. Joshua's forks: tree-sidebar + point list; cross-version diff deferred; map domain-scoped only. Notables: representative-version fallback (latest-any-classification, badged); lineage-addressed use case page; demo sandboxing (separate registrable domain + `allow-scripts`-only iframe, access matrix per convention); map boundary nodes. Decision logged in `decisions/2026-06-12.md`; index updated. Version-notes TODO remains open in `point-detail.md`.
 
 - [ ] **4.3 AI-driven bulk onboarding (CLI)** *(annotation #16)* — stub created: `sdk-cli/bulk-onboarding.md`.
   > Quoted text: "no story for onboarding an existing ecosystem (bulk import / repo scan vs. one-point-at-a-time)"

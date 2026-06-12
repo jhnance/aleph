@@ -41,11 +41,11 @@ Fully spec out the health scores system. Checklist:
 - [Create Point](points/create-point.md) — org member creates a new point within a domain, specifying type and metadata
 - [Update Point Status](points/update-point-status.md) — transitions a point through `active → deprecated → archived`
 
-## catalog (read path — stubs, 2026-06-10)
-- [Browse Catalog](catalog/browse-catalog.md) — domain tree + point listing with status/health *(stub)*
-- [Point Detail](catalog/point-detail.md) — single-point page: versions, use cases, exports, props, connections *(stub)*
-- [View Use Case](catalog/view-use-case.md) — use case content, edit history, demo artifact playback *(stub)*
-- [Ecosystem Map](catalog/ecosystem-map.md) — graph visualization of points and connections *(stub)*
+## catalog
+- [Browse Catalog](catalog/browse-catalog.md) — domain-tree sidebar + point list with status/health/type filters (designed 2026-06-12)
+- [Point Detail](catalog/point-detail.md) — aggregate single-point page anchored on the representative (latest-release) version
+- [View Use Case](catalog/view-use-case.md) — lineage-addressed page: content, edit history, per-version appearances, sandboxed live demos
+- [Ecosystem Map](catalog/ecosystem-map.md) — domain-scoped graph with boundary nodes; org-wide and neighborhood views deferred
 
 ## versioning
 - [Publish Point Version](versioning/publish-point-version.md) — SDK/CLI publishes a new version; assigns semantic + monotonic version, records use case attachments from the payload

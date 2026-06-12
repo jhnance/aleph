@@ -26,6 +26,18 @@ A system-level validation that evaluates whether a Point, version, or export mee
 
 The stable logical identity of a use case across its entire edit history. All content versions of the same use case share a lineage ID. "Lineage" refers specifically to the `use_case_lineages` record, not to the content records themselves.
 
+## Attachment
+
+Design-doc shorthand for a `point_version_use_cases` row: the record that publishes one use case (a lineage, plus the content record current at publish time) onto one point version, carrying its demo artifact URL and optional export scoping. Created only by the CLI version publish; mutable only in `use_case_id` (edit re-pointing) and `unpublished_at` (soft retraction). **Not** user-uploaded files — user-facing surfaces say a use case "appears in" or "is published on" a version. If uploadable supporting documents (Figma files, PDFs) are ever introduced, they need a different name.
+
+## Demo
+
+A running, interactive rendering of a use case's behavior: the demo entry point from the `.aleph.ts` file, built and uploaded at publish time, mock-backed via MSW. The user operates it directly on the page (in a sandboxed iframe) — it is not a video, screenshot, or static documentation. Every attachment carries exactly one demo (`demo_artifact_url NOT NULL`), immutable and bound to its version at release time.
+
+## Representative Version
+
+The version whose manifests stand in for a point on point-level surfaces (point detail, map rollups): the latest `release`-classification version by the composite semantic key, falling back to the latest version of any classification (badged in the UI) when no release exists yet.
+
 ## Connection
 
 A directed relationship between two Points. Connections are not symmetric — A depending on B is a different connection from B depending on A. A Point can have both outgoing connections (dependencies) and incoming connections (dependents/consumers).
@@ -60,8 +72,8 @@ An authentication link emailed to a user containing a single-use plaintext token
 
 ## Session
 
-An active authenticated credential represented as a signed JWT (HS256) stored in an `HttpOnly` cookie. The payload carries `user_id`, `active_organization_id`, and a 30-day expiry. No session record is stored in the database — the server verifies the JWT signature on each request without a DB round trip.
+An active authenticated credential represented as a signed JWT (HS256) stored in an `HttpOnly; Secure; SameSite=Lax` cookie. The payload is identity-only — `user_id` and a 30-day expiry; no org claim (2026-06-11): org context comes from the URL and is membership-checked per request. No session record is stored in the database; signature verification needs no DB round trip.
 
 ## Monotonic Version
 
-An application-managed integer assigned to each Point Version providing reliable total ordering within a Point's history. Used for forward-propagation queries where comparing semantic version strings would be fragile.
+An application-managed integer assigned to each Point Version providing reliable total ordering within a Point's history — the insertion-order tiebreaker in the composite semantic ordering key, used wherever comparing semver strings would be fragile.
