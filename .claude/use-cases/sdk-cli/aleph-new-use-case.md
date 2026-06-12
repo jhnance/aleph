@@ -1,5 +1,9 @@
 ---
 status: To Do
+related:
+  - use-case-management/draft-use-case.md
+  - sdk-cli/detecting-use-cases.md
+  - sdk-cli/aleph-config.md
 ---
 
 # `aleph new use-case`
@@ -29,6 +33,6 @@ Scaffolds a new `.aleph.ts` file for a use case. Handles two creation flows: CLI
 
 ### Shared
 
-- Requires an authenticated session and an active org; see CLI Auth use case
+- Requires an authenticated session; the org comes from the locally declared `org` slug (no "active org" state — see CLI Auth use case)
 - Requires `aleph.config.ts` at the project root (for `pointId` and API base URL); returns a clear error if absent
 - The generated file is a valid TypeScript file that passes the `defineUseCase()` shape check

@@ -1,5 +1,11 @@
 ---
 status: To Do
+related:
+  - health-checks/health-score.md
+  - catalog/browse-catalog.md
+  - catalog/point-detail.md
+  - connections/view-connections.md
+  - connections/declare-dependencies.md
 ---
 
 # Evaluate Point Health
@@ -17,4 +23,4 @@ The system evaluates whether a point meets catalog completeness criteria and sur
 - The bulk catalog endpoint (`GET /api/orgs/:orgSlug/points`) includes a computed `healthy: boolean` field on each point summary to enable at-a-glance health status in the catalog view; this computation runs in bulk (e.g. via a single query with aggregates) to avoid N+1 queries
 - Additional health criteria (description completeness, test coverage, export-to-use-case ratio) are out of scope for this phase; the invariants above are the complete set for now
 - The point must belong to the current org; returns 404 if not found
-- The `:orgSlug` must match the session's active org; mismatch returns 403 (`org_context_mismatch`). Requests with no active org return 400; unauthenticated requests return 401
+- The org is resolved from `:orgSlug` by the per-request slug⋈membership query (2026-06-11, URL-org-authoritative); a user with no membership in that org gets 404 (tenant-hiding). Unauthenticated requests return 401

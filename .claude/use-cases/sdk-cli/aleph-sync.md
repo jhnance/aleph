@@ -1,5 +1,9 @@
 ---
 status: To Do
+related:
+  - sdk-cli/aleph-config.md
+  - sdk-cli/detecting-use-cases.md
+  - sdk-cli/aleph-scan.md
 ---
 
 # `aleph sync`
@@ -8,7 +12,7 @@ Pulls title changes made in Aleph down to local `.aleph.ts` files. One-way: Alep
 
 ## Acceptance Criteria
 
-- Requires an authenticated session and an active org; see CLI Auth use case
+- Requires an authenticated session; the org comes from the locally declared `org` slug (no "active org" state — see CLI Auth use case)
 - Reads `aleph.lock` to determine which use case IDs are declared for this point; if the lock file is missing or out of sync with the codebase, exits with instructions to run `aleph scan` first
 - For each ID in the lock file, fetches the current title from the Aleph API and compares it against the `title` field in the corresponding `.aleph.ts` file
 - If all titles match, exits 0 with a brief confirmation message and makes no changes

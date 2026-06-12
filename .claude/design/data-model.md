@@ -33,18 +33,26 @@ CREATE TABLE users
 -- never checked again — session continuity is handled by the JWT.
 CREATE TABLE auth_codes
 (
-    id         UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
-    email      TEXT        NOT NULL,
-    code_hash  TEXT        NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL,
-    used_at    TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                 UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
+    email              TEXT        NOT NULL,
+    code_hash          TEXT        NOT NULL,
+    expires_at         TIMESTAMPTZ NOT NULL,
+    used_at            TIMESTAMPTZ,
+    -- Set only for CLI device-auth rows (see auth/cli-auth.md). The CLI polls with the
+    -- plaintext device code; the same row's magic link, clicked in the browser, stamps used_at,
+    -- which the poll reads as "approved". device_consumed_at makes token minting single-use.
+    device_code_hash   TEXT,
+    device_consumed_at TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_auth_code_email ON auth_codes (email);
 -- Redemption queries by hash (UPDATE ... WHERE code_hash = $1); unique by construction
 -- (SHA-256 of 32 random bytes), so a unique index doubles as a collision guard.
 CREATE UNIQUE INDEX idx_auth_code_hash ON auth_codes (code_hash);
+-- The CLI poll looks rows up by device_code_hash; same collision-guard reasoning. Partial:
+-- only device-auth rows carry it.
+CREATE UNIQUE INDEX idx_auth_code_device_hash ON auth_codes (device_code_hash) WHERE device_code_hash IS NOT NULL;
 
 -- No sessions table. Sessions are JWT-based: a signed HS256 JWT stored in an
 -- HttpOnly cookie. The payload is identity-only (user_id, exp — no org claim,

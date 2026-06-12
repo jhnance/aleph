@@ -1,5 +1,8 @@
 ---
 status: To Do
+related:
+  - auth/magic-link-sign-in.md
+  - orgs/create-organization.md
 ---
 
 # Org Switching

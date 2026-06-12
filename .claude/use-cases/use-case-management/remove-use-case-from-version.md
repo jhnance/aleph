@@ -21,7 +21,7 @@ The cascade question that blocked this flow is gone: server-side forward propaga
 - The attachment row is never deleted; only `unpublished_at` changes (enforced by the `point_version_use_cases` near-immutability trigger)
 - Unpublished attachments are excluded from the version's use case list in all default read paths (point detail, view use case, search indexing)
 - Org `admin`+ can list a version's unpublished attachments in a dedicated view (`GET .../versions/:versionId/use-cases?include=unpublished`) and can republish; the dedicated view is not visible to `member`/`viewer`
-- Unpublish requires org role `member` or higher (catalog write); republish requires `admin`+ (it acts on a surface only admins can see). `viewer` is read-only; insufficient role returns 403. The `:orgSlug` must match the session's active org; mismatch returns 403 (`org_context_mismatch`). Requests with no active org return 400; unauthenticated requests return 401
+- Unpublish requires org role `member` or higher (catalog write); republish requires `admin`+ (it acts on a surface only admins can see). `viewer` is read-only; insufficient role returns 403. The org is resolved from `:orgSlug` by the per-request slug⋈membership query (2026-06-11, URL-org-authoritative); a user with no membership in that org gets 404 (tenant-hiding). Unauthenticated requests return 401
 
 ## Open
 

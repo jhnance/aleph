@@ -1,5 +1,11 @@
 ---
 status: To Do
+related:
+  - versioning/view-version-history.md
+  - versioning/component-props-manifest.md
+  - use-case-management/publish-use-case.md
+  - connections/create-connection.md
+  - sdk-cli/publish-workflow.md
 ---
 
 # Publish Point Version
@@ -10,7 +16,7 @@ There is **no server-side forward propagation** (removed 2026-06-10 — an anach
 
 ## Acceptance Criteria
 
-- `POST /api/orgs/:orgSlug/points/:id/versions` accepts `versionSemantic` (semver string), `versionClassification` (`'release' | 'prerelease' | 'hotfix' | 'metadata'`), `exports` (array of `{ name, predecessorExportId? }`), `useCases` (array of `{ lineageId, title, exportName?, demoArtifactUrl }`), optional `connections` (array of `{ toVersionId, type? }`), and for `frontend_component` points an optional `props` array of `{ name, propType?, required?, defaultValue?, description? }`; requires an authenticated session with an active org
+- `POST /api/orgs/:orgSlug/points/:id/versions` accepts `versionSemantic` (semver string), `versionClassification` (`'release' | 'prerelease' | 'hotfix' | 'metadata'`), `exports` (array of `{ name, predecessorExportId? }`), `useCases` (array of `{ lineageId, title, exportName?, demoArtifactUrl }`), optional `connections` (array of `{ toVersionId, type? }`), and for `frontend_component` points an optional `props` array of `{ name, propType?, required?, defaultValue?, description? }`; requires an authenticated session
 - The point must belong to the current org; returns 404 if not found or inaccessible
 - The endpoint opens a transaction and immediately executes `SELECT id FROM points WHERE id = $1 FOR UPDATE` to serialize concurrent publishes for the same point — prevents two simultaneous transactions from computing the same `version_monotonic`. The transaction's first statement is `SET LOCAL statement_timeout = '15s'` — publish gets a larger budget than the 5s role default, scoped to this transaction only (2026-06-11). No external IO runs inside the transaction, by construction: demo artifacts were uploaded to S3 before this call, and search indexing happens post-commit
 - `versionSemantic` must be unique within the point (`UNIQUE (point_id, version_semantic)` on `point_versions`); returns 409 if already published
@@ -65,7 +71,7 @@ if (predecessorVersionId === null) {
 - **Props manifest (`frontend_component` only):** for each entry in `props`, resolve `name` to an existing `component_props` row (`UNIQUE (point_id, name)`) or insert a new one; insert version-specific metadata (`propType`, `required`, `defaultValue`, `description`) into `point_version_component_props`; these rows are immutable after insertion; props are not automatically forward-propagated — they must be re-declared in each publish payload. Two tables mirror the `point_exports` / `point_version_exports` pattern: `component_props` is the point-level catalog of prop identities (name is stable), and `point_version_component_props` holds the version-specific metadata so that changes to a prop's type, required flag, or description are tracked per version without duplicating the name
 - **Connections:** insert each connection as `(from_version_id = new version id, to_version_id = entry.toVersionId, type = entry.type ?? 'dependency', organization_id = current org)`; both versions must belong to the current org (enforced by compound FKs); `connections` rows are immutable after insertion. No cycle check is needed: every publish-created edge originates at the brand-new version, so the version graph is a DAG by construction (2026-06-10 — see `data-model.md`, Connection acyclicity)
 - Returns 201 with: `id`, `versionSemantic`, `versionMonotonic`, `status`, `exports` (with ids and predecessorExportId), `useCases` (with `lineageId`, `useCaseId`, `exportId`, `demoArtifactUrl`), `connections`, `createdAt`
-- Requires org role `member` or higher — `viewer` is read-only; insufficient role returns 403. The `:orgSlug` must match the session's active org; mismatch returns 403 (`org_context_mismatch`). Requests with no active org return 400; unauthenticated requests return 401
+- Requires org role `member` or higher — `viewer` is read-only; insufficient role returns 403. The org is resolved from `:orgSlug` by the per-request slug⋈membership query (2026-06-11, URL-org-authoritative); a user with no membership in that org gets 404 (tenant-hiding). Unauthenticated requests return 401
 
 ## TODO (2026-06-10)
 

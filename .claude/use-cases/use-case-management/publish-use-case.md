@@ -18,7 +18,7 @@ Example: ProductCarousel has v1.0.0, a hotfix v1.0.1 (predecessor: v1.0.0), and 
 
 ## Acceptance Criteria
 
-- `POST /api/orgs/:orgSlug/drafts/:draftId/publish` promotes the draft; requires an authenticated session with an active org
+- `POST /api/orgs/:orgSlug/drafts/:draftId/publish` promotes the draft; requires an authenticated session
 - The draft's lineage must have at least one existing version attachment — publishing a never-attached (brand-new) draft returns 409 with a message directing to the CLI flow (`aleph new use-case --id=<lineage uuid>` + version publish)
 - **Promotion mechanics:**
   - the existing `use_case_lineages` row is locked (`SELECT ... FOR UPDATE`) for the duration of the transaction — this serializes concurrent edit-publishes for the same lineage and orders against any in-flight CLI version publish touching it
@@ -30,7 +30,7 @@ Example: ProductCarousel has v1.0.0, a hotfix v1.0.1 (predecessor: v1.0.0), and 
 - The `draft_use_cases` row is deleted
 - The entire operation is atomic — if any step fails, the transaction rolls back and the draft is preserved
 - Returns 201 with the new content record: `id`, `lineageId`, `title`, `content`, `parentId`, `repointedVersionIds`, `createdAt`
-- Requires org role `member` or higher — `viewer` is read-only; insufficient role returns 403. The `:orgSlug` must match the session's active org; mismatch returns 403 (`org_context_mismatch`). Requests with no active org return 400; unauthenticated requests return 401
+- Requires org role `member` or higher — `viewer` is read-only; insufficient role returns 403. The org is resolved from `:orgSlug` by the per-request slug⋈membership query (2026-06-11, URL-org-authoritative); a user with no membership in that org gets 404 (tenant-hiding). Unauthenticated requests return 401
 
 ## Notes (2026-06-10)
 

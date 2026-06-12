@@ -1,5 +1,10 @@
 ---
 status: To Do
+related:
+  - auth/cli-auth.md
+  - auth/org-switching.md
+  - auth/logout.md
+  - orgs/invite-flow.md
 ---
 
 # Magic Link Sign-In

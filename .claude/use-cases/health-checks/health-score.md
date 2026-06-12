@@ -3,6 +3,7 @@ status: Stub
 related:
   - health-checks/evaluate-point-health.md
   - connections/declare-dependencies.md
+  - connections/view-connections.md
 ---
 
 # Health Score
@@ -19,6 +20,7 @@ Joshua's direction: "In reality, health scores will be either pipeline actions o
   - *Pipeline actions:* dedicated published actions (GitHub Actions marketplace per supported language/framework) — composable, users import what they want; matches the existing golden-path publish-flow strategy in ALIGNMENT.md
 - **Deterministic vs. nondeterministic scores:** some checks are pure functions of catalog state (computable inline); others run against codebases or external state and take time — Aleph may need an **async worker system** to process nondeterministic health scores (Joshua, 2026-06-10). Defining the deterministic/nondeterministic split is part of the full health-scores session (see `index.md` planned sessions)
 - **Inputs to the score (candidates):** demo artifact presence per (version, use case); description completeness; test coverage / test-to-use-case linkage (Tests entity is not yet designed); export-to-use-case ratio; **outdated dependencies** — declared `package.json` ranges vs. latest published versions (pairs with `declare-dependencies.md`; Joshua to describe in detail)
+- **Dependency-graph-aware health (raised 2026-06-12 review):** health is not purely local. Two graph-directed questions fall out of the connection model: *"which of my dependencies are healthy/unhealthy?"* (incoming risk) and *"which of my dependents am I making unhealthy by failing my own scores?"* (outgoing blast radius). Open design question: does the score aggregate over the connection graph, and how far — direct edges only or transitive? This is the link between health and `connections/*`; surfacing lives with `view-connections.md` / `ecosystem-map.md`
 - **Reporting:** results need structured references — `{ rule, versionId?, exportId?, detail }` — so the UI can badge the specific version or export, not just prose (review finding; applies to the existing violations shape too)
 - **Where scores land:** pushed to Aleph via the API at check time (vs. computed on read like the boolean) — implies a storage decision
 
