@@ -7,9 +7,7 @@ Convention (2026-06-10): use case files that connect to other use cases declare 
 ## Planned sessions
 
 ### Use case identification and creation ✓ (2026-06-09)
-Resolved: `.aleph.ts` file format, explicit `id` field (Option C), `aleph new use-case` / `aleph scan` / `aleph sync` command design, lock file format, `aleph publish` preflight checks, `demo_artifact_url` on `point_version_use_cases`.
-
-**One open question remaining:** `aleph sync` title push — which `pointVersionId` to publish against. See `decisions/2026-06-09.md`.
+Resolved: `.aleph.ts` file format, explicit `id` field (Option C), `aleph new use-case` / `aleph scan` / `aleph sync` command design, lock file format, `aleph publish` preflight checks, `demo_artifact_url` on `point_version_use_cases`. The former title-push open question is moot — `aleph sync` went pull-only (titles are Aleph-authoritative, 2026-06-10), so there is no push target to decide. See `decisions/2026-06-09.md`.
 
 ### Use case forward propagation ✓ (2026-06-10)
 Resolved by dissolving it: server-side forward propagation was removed (anachronism predating `.aleph.ts`/`aleph.lock`) — a version's use case set is exactly the publish payload, every attachment is born with a demo (`demo_artifact_url NOT NULL`), export scoping moved to `point_version_use_cases`, and removal became per-row **unpublish/republish** (no cascade exists to decide). "Propagation" now means language edits re-pointing a lineage's attachments forward. No `propagated BOOLEAN` needed. See `decisions/2026-06-10.md`; docs updated: `publish-point-version.md`, `publish-use-case.md`, `remove-use-case-from-version.md`, `publish-workflow.md`, `aleph-config.md` (new), `data-model.md`, ALIGNMENT.md.

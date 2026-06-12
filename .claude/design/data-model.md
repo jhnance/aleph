@@ -260,6 +260,9 @@ CREATE TABLE point_versions
 CREATE INDEX idx_point_version_point_id ON point_versions (point_id);
 CREATE INDEX idx_point_version_point_id_monotonic ON point_versions (point_id, version_monotonic);
 CREATE INDEX idx_point_version_semantic_order ON point_versions (point_id, version_major DESC, version_minor DESC, version_patch DESC, version_monotonic DESC);
+-- Successor lookups walk the predecessor tree (WHERE predecessor_version_id = $id, returns
+-- multiple rows — hotfix + next release can share a predecessor). Partial: first versions are NULL.
+CREATE INDEX idx_point_version_predecessor ON point_versions (predecessor_version_id) WHERE predecessor_version_id IS NOT NULL;
 
 -- Version-level metadata — this is where details live.
 -- `point_id` is carried here to enable compound FKs that enforce both
@@ -560,8 +563,6 @@ All publish transactions must begin with
 `SELECT id FROM points WHERE id = $1 FOR UPDATE` to lock the parent point row. This serializes concurrent publishes for the same point, preventing two transactions from reading the same
 `MAX(version_monotonic)` and producing a conflict on the
 `UNIQUE (point_id, version_monotonic)` constraint.
-
-See the open question in `./open-questions.md`.
 
 **use_cases immutability**
 
