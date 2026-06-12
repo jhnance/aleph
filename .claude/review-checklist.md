@@ -124,9 +124,10 @@ Session outcome: the knot dissolved when Joshua identified server-side forward p
   > Joshua: "Walk me through these two more thoroughly?"
   Done (2026-06-11): hybrid — `auth_codes`+`users` exempt with documented app guards (their flows run unauthenticated; nothing to key a policy on), `organizations`+`organization_memberships` user-keyed via new `app.current_user_id` session var (org INSERT requires only an authenticated user — the owner membership row can't precede the org row). Cookie: `HttpOnly; Secure; SameSite=Lax; Path=/` + no state-changing GETs under cookie authority + `Origin`/JSON content-type checks; login CSRF accepted and documented. Access matrices per the new convention. Updated: `data-model.md` (RLS + new cookie/CSRF section), `magic-link-sign-in.md`, ALIGNMENT.md; decisions logged in `decisions/2026-06-11.md`.
 
-- [s] **3.3 Transaction scoping how-to** *(annotation #31)*
+- [x] **3.3 Transaction scoping how-to** *(annotation #31)*
   > Quoted text: "scope the transaction to DB work and set statement timeouts"
   > Joshua: "how?"
+  Done (2026-06-11): transaction = one unit of DB work, nothing else (general rule, encoded in ALIGNMENT.md). RLS context moves from the request-spanning preHandler transaction (rewritten in place) into a `withRequestContext` helper; `sql.reserve()` per request eliminated; external IO ordered around the transaction (inputs before, email/search after commit). Role-level timeouts: statement 5s / lock 2s / idle-in-transaction 10s / transaction 30s (Postgres pinned ≥ 17), `aleph_service` exempt, `SET LOCAL` overrides for heavy ops (publish 15s). Updated: `data-model.md` (prereq #2 + new *Transaction scoping and statement timeouts* section), `magic-link-sign-in.md` (email after commit), `publish-point-version.md` (`SET LOCAL` + no-IO-by-construction), ALIGNMENT.md; decision logged.
 
 - [s] **3.4 Carried in from 1.10:** org-slug routing vs. the no-DB-lookup JWT model (does the URL org become authoritative? membership check per request?). Also the 30-day membership-revocation gap and JWT mitigation choice.
 

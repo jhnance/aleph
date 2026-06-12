@@ -11,7 +11,7 @@ A user submits their email and receives a magic link. Clicking the link authenti
 - `POST /api/auth/magic-link` accepts an email address; returns 200 regardless of whether the email is registered
   - Returning the same response for known and unknown emails prevents **email enumeration**: if the server returned a different error for unregistered emails, an attacker could probe the endpoint to discover which email addresses have accounts
 - Server generates a cryptographically random 32-byte token (`crypto.randomBytes(32)`), SHA-256 hashes it (`crypto.createHash('sha256')`), and inserts a row into `auth_codes` with `email`, `code_hash`, and `expires_at = now() + 15 minutes`; `used_at` is null
-- Server sends a magic link email to the submitted address containing the plaintext token as a URL query parameter (e.g. `/api/auth/verify?token=<hex>`)
+- Server sends a magic link email to the submitted address containing the plaintext token as a URL query parameter (e.g. `/api/auth/verify?token=<hex>`); the send happens **after** the transaction inserting the `auth_codes` row commits — external IO never runs inside an open transaction (2026-06-11 transaction-scoping rule) — and a failed send leaves only an unused row that expires on its own; the user retries
 - `GET /api/auth/verify?token=<token>` hashes the received token and within a single transaction executes:
   ```sql
   UPDATE auth_codes

@@ -996,12 +996,14 @@ The isolation boundary is the organization. RLS enforces that a request can only
 
 1. **User and membership model** — `users`, `organization_memberships`. ✅ Done.
 
-2. **Connection-level context** — At the start of each request, the Fastify `preHandler` calls
-   `sql.reserve()`, begins a transaction, and runs
-   `SELECT set_config('app.current_org_id', $1, true), set_config('app.current_user_id', $2, true)`
-   using the `org` and `sub` claims from the verified JWT (`app.current_user_id` added 2026-06-11
-   for the user-keyed identity-plane policies). (`set_config(..., true)` is transaction-local —
-   identical semantics to `SET LOCAL` — and accepts a bind parameter, which `SET` does not.) ✅ Done.
+2. **Connection-level context** — Every DB access goes through a helper that opens a transaction
+   and sets `app.current_user_id` / `app.current_org_id` from the verified JWT as its first
+   statement (`set_config(..., true)` is transaction-local — identical semantics to `SET LOCAL` —
+   and accepts a bind parameter, which `SET` does not). The Fastify `preHandler` only verifies the
+   JWT and stashes the context; the transaction wraps one unit of DB work and nothing else — see
+   *Transaction scoping and statement timeouts* below. (Rewritten 2026-06-11: formerly a
+   request-spanning transaction opened in the preHandler via `sql.reserve()`, which welded
+   transaction lifetime to request lifetime, external IO included.) ✅ Done.
 
 3. **`organization_id` denormalized onto all downstream tables
    ** — so RLS policies are direct column checks with no multi-hop joins. ✅ Done.
@@ -1198,6 +1200,74 @@ USER aleph_service_user WITH PASSWORD '...' IN ROLE aleph_service;
 The application's postgres.js instance connects as
 `aleph_app_user`. The migration runner connects as
 `aleph_service_user` via a separate connection string. These must never be swapped.
+
+**Transaction scoping and statement timeouts** (2026-06-11)
+
+The rule: **a transaction wraps one unit of DB work and nothing else** — no email, no S3, no
+search-engine calls, no other network IO while a transaction is open. An open transaction
+exclusively holds a pooled connection, holds its locks until commit (the publish flow's
+`FOR UPDATE` on the point row serializes publishes for that point), and pins vacuum's row-version
+horizon. Slow external work inside a transaction converts an external brownout into pool exhaustion
+and lock convoys — the `idle in transaction` failure mode. Long-running work is handled
+asynchronously; whether that's a job queue or a transactional outbox is decided together with the
+search dual-write question (review checklist 5.1).
+
+The RLS session context rides inside each transaction rather than a request-spanning one:
+
+```typescript
+async function withRequestContext<T>(
+    sql: Sql,
+    ctx: AuthContext,
+    fn: (tx: TransactionSql) => Promise<T>,
+): Promise<T> {
+    return sql.begin(async (tx) => {
+        // transaction-local (`true`) — reverts at commit/rollback, so a pooled
+        // connection can never leak one request's context into the next.
+        // Null context values are skipped, never written as empty strings:
+        // ''::uuid turns policy evaluation into a cast error instead of a clean deny.
+        await setContext(tx, ctx);
+        return fn(tx);
+    });
+}
+```
+
+- `sql.begin` pins one connection for the transaction's duration, which is all the former
+  `sql.reserve()` was for — per-request connection reservation is gone.
+- A request that needs atomicity across statements is *one* unit of work = one helper call. Two
+  helper calls are two independent commits — a choice made explicitly, never an accident.
+- External effects are ordered around the transaction: inputs before it (the publish payload's
+  upload-before-POST demo artifacts already comply), outputs after commit (magic-link email send,
+  Meilisearch indexing). A post-commit failure leaves committed DB state that must be harmless on
+  its own — e.g. an unused `auth_codes` row that simply expires.
+
+Server-enforced timeouts make the rule self-enforcing against code that violates it
+([PG client config](https://www.postgresql.org/docs/current/runtime-config-client.html)); set per
+role so they survive restarts and misconfigured clients:
+
+```sql
+ALTER ROLE aleph_app SET statement_timeout = '5s';
+ALTER ROLE aleph_app SET lock_timeout = '2s';
+ALTER ROLE aleph_app SET idle_in_transaction_session_timeout = '10s';
+ALTER ROLE aleph_app SET transaction_timeout = '30s'; -- PG 17+; Postgres is pinned >= 17
+
+-- Migrations are legitimately long-running:
+ALTER ROLE aleph_service SET statement_timeout = 0;
+ALTER ROLE aleph_service SET lock_timeout = 0;
+ALTER ROLE aleph_service SET idle_in_transaction_session_timeout = 0;
+ALTER ROLE aleph_service SET transaction_timeout = 0;
+```
+
+| Setting | What it kills |
+|---------|---------------|
+| `statement_timeout` | a single runaway query (its budget includes lock-wait time) |
+| `lock_timeout` | waiting too long behind another transaction's lock — kept below `statement_timeout` so contention fails with a lock error, not a generic timeout |
+| `idle_in_transaction_session_timeout` | the scoping rule's enforcer: a transaction idle because code is awaiting non-DB work gets killed server-side |
+| `transaction_timeout` | total transaction lifetime — the backstop (the reason Postgres is pinned ≥ 17) |
+
+Heavy operations raise their budget transaction-locally, never globally: the publish transaction's
+first statement runs `SET LOCAL statement_timeout = '15s'`. The numbers are starting points to tune
+against reality; the structure — role-level defaults, `SET LOCAL` overrides, idle-in-transaction as
+the enforcer — is the decision.
 
 **`organization_id` propagation to downstream tables**
 

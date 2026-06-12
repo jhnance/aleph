@@ -34,6 +34,7 @@ No existing tool owns this space cleanly. Internal wikis go stale. Component lib
   `sql.reserve()`); two Postgres roles — `aleph_app` (RLS enforced) and
   `aleph_service` (BYPASSRLS, migrations/seeding only). Identity plane (2026-06-11): `auth_codes`/`users` RLS-exempt with documented app guards (unauthenticated flows); `organizations`/`organization_memberships` user-keyed via `app.current_user_id`
 - API routing: org-scoped resources are addressed under `/api/orgs/:orgSlug/...`; the SPA mirrors this (org slug in the URL path); `/api/auth/*` and `POST /api/orgs` are global
+- Transactions are scoped to single units of DB work — no external IO while a transaction is open; RLS context is set per-transaction via helper; role-level timeouts (`statement`/`lock`/`idle_in_transaction`/`transaction`) enforce it server-side; long-running work runs async (queue/outbox mechanism decided with search dual-write); Postgres pinned ≥ 17 (2026-06-11)
 - Object storage: AWS S3 (demo artifacts; uploaded pre-publish via pre-signed URLs)
 - Token hashing: SHA-256 for magic link tokens (32 random bytes; bcrypt overhead unnecessary); HS256 for JWT signing
 - SDK/CLI: TypeScript-first; CLI published to npm; GitHub Actions marketplace workflows for golden-path publish flows; other-language SDKs post-MVP
