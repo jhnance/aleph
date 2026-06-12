@@ -27,13 +27,12 @@ No existing tool owns this space cleanly. Internal wikis go stale. Component lib
 - Infra: Docker, Kubernetes
 - Search: self-hosted Meilisearch
 - Auth: custom magic link / OTP — no third-party auth provider
-- Sessions: JWT (HS256, 30-day expiry); payload carries `user_id`, `active_organization_id`,
-  `jti`; stored in an `HttpOnly; Secure; SameSite=Lax` cookie; no DB lookup per request. CSRF posture (2026-06-11): `Lax` + no state-changing GETs under cookie authority + `Origin`/JSON content-type checks on mutating routes
-- Multi-org: users belong to multiple organizations; active org lives in the JWT, switchable per-session (Slack model)
+- Sessions: JWT (HS256, 30-day expiry); payload is identity-only — `user_id`, `jti`, no org claim (2026-06-11); stored in an `HttpOnly; Secure; SameSite=Lax` cookie; signature verification needs no DB lookup; org-scoped routes membership-check the URL org per request (never cached). CSRF posture (2026-06-11): `Lax` + no state-changing GETs under cookie authority + `Origin`/JSON content-type checks on mutating routes
+- Multi-org: users belong to multiple organizations; org context comes from the URL path and is membership-checked per request (2026-06-11) — "switching" is navigation, tabs are independent, membership and role revocation bind on the next request
 - Multi-tenancy: org-level isolation via PostgreSQL RLS (`set_config('app.current_org_id', $1, true)` +
   `sql.reserve()`); two Postgres roles — `aleph_app` (RLS enforced) and
   `aleph_service` (BYPASSRLS, migrations/seeding only). Identity plane (2026-06-11): `auth_codes`/`users` RLS-exempt with documented app guards (unauthenticated flows); `organizations`/`organization_memberships` user-keyed via `app.current_user_id`
-- API routing: org-scoped resources are addressed under `/api/orgs/:orgSlug/...`; the SPA mirrors this (org slug in the URL path); `/api/auth/*` and `POST /api/orgs` are global
+- API routing: org-scoped resources are addressed under `/api/orgs/:orgSlug/...`; the SPA mirrors this (org slug in the URL path); the URL org is authoritative (2026-06-11); `/api/auth/*` and `POST /api/orgs` are global
 - Transactions are scoped to single units of DB work — no external IO while a transaction is open; RLS context is set per-transaction via helper; role-level timeouts (`statement`/`lock`/`idle_in_transaction`/`transaction`) enforce it server-side; long-running work runs async (queue/outbox mechanism decided with search dual-write); Postgres pinned ≥ 17 (2026-06-11)
 - Object storage: AWS S3 (demo artifacts; uploaded pre-publish via pre-signed URLs)
 - Token hashing: SHA-256 for magic link tokens (32 random bytes; bcrypt overhead unnecessary); HS256 for JWT signing

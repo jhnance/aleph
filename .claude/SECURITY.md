@@ -14,6 +14,16 @@ design. Accepted because the payoff against a catalog tool is negligible and the
 (CSRF-protecting the login itself) fights the magic-link UX. Under the alternative password design
 below, this risk would be cheaply mitigable — the acceptance is specific to magic links.
 
+**URL org authoritative; per-request membership check; identity-only JWT (2026-06-11)** — The JWT
+slimmed to `sub`/`exp`/`iat`/`jti`; the former `org` claim is gone. `/api/orgs/:orgSlug/...`
+resolves the slug and verifies membership in one indexed query riding the request's transaction
+(returning org id + role; no row → 404, tenant-hiding). This closes the **30-day
+membership-revocation gap** entirely — removal, and role demotion, bind on the next request — and
+fixes multi-tab org use and deep links structurally. The membership check is **never cached**;
+caching reopens the gap. Residual: *user-level* revocation (compromised or banned account) still
+rides the 30-day token — escape hatches are the `jti`-keyed `revoked_tokens` table (designed, not
+built) and JWT-secret rotation (global logout).
+
 ## Alternative auth design: password-based ("normal") auth
 
 Reference point for what the system would look like without magic links, and therefore what the
@@ -56,5 +66,4 @@ asymmetry is why magic links are the chosen design.
 
 ## Open questions
 
-**Open (security session):** whether the URL org should become
-*authoritative* (requiring a per-request membership check, which conflicts with the no-DB-lookup JWT model) or remain a consistency check against the JWT as decided here. This pairs with the 30-day membership-revocation question.
+None currently (2026-06-11 — the URL-org-authority / revocation-gap question above was the last; resolved in the Phase 3 security session).

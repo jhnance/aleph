@@ -47,9 +47,11 @@ CREATE INDEX idx_auth_code_email ON auth_codes (email);
 CREATE UNIQUE INDEX idx_auth_code_hash ON auth_codes (code_hash);
 
 -- No sessions table. Sessions are JWT-based: a signed HS256 JWT stored in an
--- HttpOnly cookie. The payload carries user_id, active_organization_id, and exp.
--- No DB lookup is required per request — the server verifies the signature only.
--- Org switching re-issues the JWT with the updated active_organization_id.
+-- HttpOnly cookie. The payload is identity-only (user_id, exp — no org claim,
+-- 2026-06-11): org context comes from the URL and is membership-checked per
+-- request, so org switching is plain navigation with no token re-issue, and
+-- membership revocation binds on the next request.
+-- Signature verification requires no DB lookup.
 -- Logout deletes the cookie client-side; tokens are valid until exp (30 days).
 -- A revoked_tokens table can be added later as an escape hatch for forced
 -- revocation in exceptional cases (security incidents, admin-forced logout).
@@ -738,12 +740,18 @@ When an export name changes between versions, the SDK/CLI treats this as the end
    `used_at`.
 3. Server upserts the
    `users` row for that email (creates it on first sign-in, finds it on return). Issues a signed JWT (HS256) containing
-   `user_id`, `active_organization_id` (null if the user has no org yet), and
-   `exp` (30 days). Writes the JWT as a cookie: `HttpOnly; Secure; SameSite=Lax; Path=/` (see *Session cookie attributes and CSRF*).
-4. Every subsequent request: server verifies the JWT signature. No DB lookup required. The
-   `active_organization_id` from the payload is set as `app.current_org_id` for RLS.
-5. Org switching: server verifies the user is a member of the target org, re-issues the JWT with the updated
-   `active_organization_id`, replaces the cookie.
+   `user_id` and `exp` (30 days) — identity only, no org claim (2026-06-11). Writes the JWT as a cookie: `HttpOnly; Secure; SameSite=Lax; Path=/` (see *Session cookie attributes and CSRF*).
+4. Every subsequent request: server verifies the JWT signature (no DB lookup for verification). For
+   org-scoped routes (`/api/orgs/:orgSlug/...`) the **URL org is authoritative** (2026-06-11):
+   inside the request's transaction, set `app.current_user_id`, then resolve the slug and verify
+   membership in one indexed query —
+   `SELECT o.id, m.role FROM organizations o JOIN organization_memberships m ON m.organization_id = o.id AND m.user_id = $userId WHERE o.slug = $slug`
+   — then set `app.current_org_id` from the result. No row → 404 (tenant-hiding: non-member and
+   nonexistent are indistinguishable). The returned `role` drives role checks, so membership
+   *and role* changes bind on the next request. Never cache this check — caching reopens the
+   revocation gap it closes.
+5. Org switching: pure navigation to the target org's URL — no JWT re-issue, no cookie change;
+   multiple tabs can sit on different orgs simultaneously.
 6. Logout: delete the cookie client-side. The token remains technically valid until
    `exp` but the client no longer has it.
 
@@ -752,7 +760,6 @@ When an export name changes between versions, the SDK/CLI treats this as the end
 ```json
 {
   "sub": "<user_id>",
-  "org": "<active_organization_id | null>",
   "exp": "<unix timestamp, 30 days>",
   "iat": "<unix timestamp>",
   "jti": "<random id, for future revocation support>"
@@ -761,8 +768,12 @@ When an export name changes between versions, the SDK/CLI treats this as the end
 
 `sub` (subject), `exp` (expiration), `iat` (issued at), and
 `jti` (JWT ID) are all standard registered claim names per [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519). Using standard names means JWT libraries parse them automatically and they carry unambiguous meaning to any developer reading the token.
-`org` is a custom claim. `jti` is included now so that a
-`revoked_tokens` table can be added later without requiring a new token format.
+Every claim is a standard registered name — the former custom `org` claim was removed on 2026-06-11
+(org context is URL-borne and membership-checked per request, closing the revocation gap; see step 4
+above). `jti` is included now so that a
+`revoked_tokens` table can be added later without requiring a new token format — with the org claim
+gone, that table and JWT-secret rotation (global logout) are the escape hatches for *user-level*
+revocation only, the one revocation case the per-request membership check doesn't cover.
 
 ### Session cookie attributes and CSRF (2026-06-11)
 
@@ -997,9 +1008,10 @@ The isolation boundary is the organization. RLS enforces that a request can only
 1. **User and membership model** — `users`, `organization_memberships`. ✅ Done.
 
 2. **Connection-level context** — Every DB access goes through a helper that opens a transaction
-   and sets `app.current_user_id` / `app.current_org_id` from the verified JWT as its first
-   statement (`set_config(..., true)` is transaction-local — identical semantics to `SET LOCAL` —
-   and accepts a bind parameter, which `SET` does not). The Fastify `preHandler` only verifies the
+   and sets `app.current_user_id` (from the verified JWT) and `app.current_org_id` (resolved from
+   the URL slug by the per-request membership check — see step 4 of the magic link flow) as its
+   first statements (`set_config(..., true)` is transaction-local — identical semantics to
+   `SET LOCAL` — and accepts a bind parameter, which `SET` does not). The Fastify `preHandler` only verifies the
    JWT and stashes the context; the transaction wraps one unit of DB work and nothing else — see
    *Transaction scoping and statement timeouts* below. (Rewritten 2026-06-11: formerly a
    request-spanning transaction opened in the preHandler via `sql.reserve()`, which welded
@@ -1085,7 +1097,7 @@ decided per table by what session context exists at the moment the table is touc
 
 - **`organizations`, `organization_memberships` — user-keyed policies.** Every query against them is
   authenticated, and their rows are the cross-tenant facts (who belongs to which org). Keyed on
-  `app.current_user_id`, set by the preHandler alongside `app.current_org_id`:
+  `app.current_user_id`, set inside each request transaction alongside `app.current_org_id`:
 
 ```sql
 -- Symmetric USING/WITH CHECK: the nullable-org hole above came from *asymmetric*

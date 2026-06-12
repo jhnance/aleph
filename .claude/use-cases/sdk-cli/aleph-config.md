@@ -52,4 +52,4 @@ export default defineConfig({
 ## Open questions
 
 - Monorepo: one config = one point = one project root is the current assumption (stress-tested by `bulk-onboarding.md`)
-- Should `org` be derivable from the authenticated token instead of declared? (Token carries an active org; an explicit declaration makes CI runs self-describing — leaning explicit)
+- **Pinned (2026-06-12): where machine identity lives — config vs. lockfile.** One half is settled: `org` cannot come from the token (tokens are identity-only under the URL-org-authoritative model, 2026-06-11), so it must be declared locally somewhere. The open half is *where*: "we're putting too many IDs in the config and should instead put them in the lockfile and have them populated via the CLI so it's never user-managed" (Joshua). Direction to explore: `aleph.config.ts` keeps user-managed settings (`entries`, `useCases` globs, `apiBaseUrl`); CLI-populated identity (`pointId`, possibly `org`) moves to `aleph.lock`, written by an init/link step. The example above shows the pre-pin shape and follows the resolution.

@@ -4,7 +4,7 @@ status: To Do
 
 # Magic Link Sign-In
 
-A user submits their email and receives a magic link. Clicking the link authenticates them with a session JWT set in an HttpOnly cookie. There is intentionally no separate sign-up flow — first-time sign-in creates the user record automatically. If the user belongs to exactly one org, the JWT is issued with that org active; otherwise the org claim is null and the user selects an org after sign-in.
+A user submits their email and receives a magic link. Clicking the link authenticates them with a session JWT set in an HttpOnly cookie. There is intentionally no separate sign-up flow — first-time sign-in creates the user record automatically. The JWT is identity-only (no org claim — 2026-06-11, URL-org-authoritative model); the user's memberships determine only where they are redirected after sign-in.
 
 ## Acceptance Criteria
 
@@ -25,12 +25,12 @@ A user submits their email and receives a magic link. Clicking the link authenti
 - If the UPDATE succeeds, the server runs `INSERT INTO users (email) VALUES ($email) ON CONFLICT (email) DO NOTHING` and fetches the `users.id` for that email
   - This intentional upsert means first-time and returning sign-in are the same code path. There is no separate sign-up endpoint — submitting an email for the first time is the act of registration. A separate registration flow would require returning different errors for known vs. unknown emails, re-introducing the enumeration risk above. Any user who can receive email to that address is implicitly authorized to create an account.
 - Within the same transaction, before the memberships query below, the server runs `SELECT set_config('app.current_user_id', $userId, true)` — this request arrived unauthenticated, so the preHandler set no session variables, and the user-keyed RLS policy on `organization_memberships` (2026-06-11) denies the query without it
-- Server queries `SELECT organization_id FROM organization_memberships WHERE user_id = $userId`; if exactly one row is returned, that org's id is used as the `org` claim in the JWT; if zero or multiple rows are returned, `org` = null
-- Server issues a signed HS256 JWT with claims: `sub` = user_id, `org` = (resolved above), `exp` = now() + 30 days, `iat` = now(), `jti` = random UUID; written as a cookie with `HttpOnly; Secure; SameSite=Lax; Path=/` (2026-06-11 — `SameSite=Lax` is the CSRF mitigation; it assumes no GET endpoint mutates state under the cookie's authority. See `design/data-model.md`, *Session cookie attributes and CSRF*)
-- Post-authentication redirect behavior:
-  - `org` non-null (exactly one membership): redirect directly to that org's landing page
-  - `org` null with multiple memberships: redirect to the org-selection screen; user picks via the org-switching flow
-  - `org` null with no memberships: redirect to the create-organization screen
+- Server queries `SELECT organization_id FROM organization_memberships WHERE user_id = $userId` — solely to choose the post-sign-in redirect below; the JWT carries no org claim (2026-06-11)
+- Server issues a signed HS256 JWT with claims: `sub` = user_id, `exp` = now() + 30 days, `iat` = now(), `jti` = random UUID — identity only, no org claim (2026-06-11); written as a cookie with `HttpOnly; Secure; SameSite=Lax; Path=/` (2026-06-11 — `SameSite=Lax` is the CSRF mitigation; it assumes no GET endpoint mutates state under the cookie's authority. See `design/data-model.md`, *Session cookie attributes and CSRF*)
+- Post-authentication redirect behavior (driven by the memberships query above, not by any JWT claim):
+  - exactly one membership: redirect directly to that org's landing page
+  - multiple memberships: redirect to the org-selection screen; picking one is plain navigation (see Org Switching)
+  - no memberships: redirect to the create-organization screen
 - `auth_codes` rows are never deleted; `used_at` is the tombstone
   - Immediate deletion on redemption would erase the authentication audit trail. Garbage collection of expired rows (rows where `expires_at` is in the past) can be handled by a periodic background job without affecting correctness.
 - `POST /api/auth/magic-link` is rate-limited at the API layer — per email (e.g. max 3 link requests per 15-minute window) and per IP; throttled requests still return 200 with no email sent, preserving the anti-enumeration property above (added 2026-06-10 — without this, the endpoint is an unthrottled email-bombing vector)

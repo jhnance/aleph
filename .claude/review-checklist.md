@@ -112,7 +112,9 @@ Session outcome: the knot dissolved when Joshua identified server-side forward p
 
 ---
 
-## Phase 3 — Interactive session: security deep dive
+## Phase 3 — Interactive session: security deep dive ✓ (2026-06-11)
+
+Session outcome: per-command RLS policies on nullable-org tables; hybrid identity-plane posture (exempt + user-keyed); `SameSite=Lax` CSRF posture with documented login-CSRF acceptance; transactions scoped to DB work with role-level timeouts; URL-org authority closing the 30-day revocation gap. Decisions in `decisions/2026-06-11.md`; SECURITY.md now indexes postures and accepted risks. Process outcome: access-matrix convention (ALIGNMENT.md) + adversarial beats encoded in the SDLC skills.
 
 - [x] **3.1 RLS policy hole on nullable-org tables** *(annotation #8)*
   > Quoted text: "The decided RLS policy on nullable-org tables lets any tenant hijack or delete platform rows... Recommendation: split into per-command policies — FOR SELECT allows platform + own rows; FOR UPDATE/DELETE restrict both USING and WITH CHECK to own-org rows only."
@@ -129,7 +131,8 @@ Session outcome: the knot dissolved when Joshua identified server-side forward p
   > Joshua: "how?"
   Done (2026-06-11): transaction = one unit of DB work, nothing else (general rule, encoded in ALIGNMENT.md). RLS context moves from the request-spanning preHandler transaction (rewritten in place) into a `withRequestContext` helper; `sql.reserve()` per request eliminated; external IO ordered around the transaction (inputs before, email/search after commit). Role-level timeouts: statement 5s / lock 2s / idle-in-transaction 10s / transaction 30s (Postgres pinned ≥ 17), `aleph_service` exempt, `SET LOCAL` overrides for heavy ops (publish 15s). Updated: `data-model.md` (prereq #2 + new *Transaction scoping and statement timeouts* section), `magic-link-sign-in.md` (email after commit), `publish-point-version.md` (`SET LOCAL` + no-IO-by-construction), ALIGNMENT.md; decision logged.
 
-- [s] **3.4 Carried in from 1.10:** org-slug routing vs. the no-DB-lookup JWT model (does the URL org become authoritative? membership check per request?). Also the 30-day membership-revocation gap and JWT mitigation choice.
+- [x] **3.4 Carried in from 1.10:** org-slug routing vs. the no-DB-lookup JWT model (does the URL org become authoritative? membership check per request?). Also the 30-day membership-revocation gap and JWT mitigation choice.
+  Done (2026-06-11): URL org is authoritative; JWT slimmed to identity (`sub`/`exp`/`iat`/`jti` — `org` claim deleted); one indexed slug⋈membership query per org-scoped request (riding the 3.3 transaction) returns org id + role — revocation gap closed to zero, roles per-request fresh, multi-tab/deep links fixed, switch-org endpoint and `org_context_mismatch` deleted, never cache the check. Residual user-level revocation: `jti` denylist escape hatch + secret rotation. Updated: `data-model.md`, `magic-link-sign-in.md`, `org-switching.md` (rewritten), `cli-auth.md`, `aleph-config.md` (org-from-token question resolved: explicit), ALIGNMENT.md, SECURITY.md; decision logged.
 
 ---
 

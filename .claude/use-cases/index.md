@@ -26,7 +26,7 @@ Fully spec out the health scores system. Checklist:
 
 ## auth
 - [Magic Link Sign-In](auth/magic-link-sign-in.md) — user submits email, clicks magic link, receives JWT session cookie
-- [Org Switching](auth/org-switching.md) — authenticated user switches active org; JWT re-issued with updated org
+- [Org Switching](auth/org-switching.md) — org switching is pure navigation (URL org is authoritative, 2026-06-11); `GET /api/auth/orgs` powers the picker
 - [Logout](auth/logout.md) — deletes JWT cookie client-side; no server-side revocation
 - [CLI Authentication](auth/cli-auth.md) — token via `ALEPH_TOKEN` or `~/.aleph/credentials`; magic link flow in TTY; non-TTY exits with instructions
 
