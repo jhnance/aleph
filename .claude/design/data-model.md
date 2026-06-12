@@ -70,6 +70,31 @@ CREATE TABLE organization_memberships
 
 CREATE INDEX idx_org_membership_organization_id ON organization_memberships (organization_id);
 
+-- Consent-gated, email-bound invitation to join an org (2026-06-12); membership is
+-- created only at acceptance. Rationale, near-immutability trigger, RLS policies, and
+-- access matrix are colocated with the use case: use-cases/orgs/invite-flow.md.
+CREATE TABLE org_invitations
+(
+    id              UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
+    organization_id UUID        NOT NULL REFERENCES organizations (id) ON DELETE RESTRICT,
+    email           TEXT        NOT NULL,
+    role            org_role    NOT NULL DEFAULT 'member' CHECK (role <> 'owner'),
+    invited_by      UUID        NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+    code_hash       TEXT        NOT NULL,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    accepted_at     TIMESTAMPTZ,
+    revoked_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX idx_org_invitation_code_hash ON org_invitations (code_hash);
+CREATE INDEX idx_org_invitation_email ON org_invitations (email);
+CREATE INDEX idx_org_invitation_organization_id ON org_invitations (organization_id);
+-- At most one live invitation per (org, email). Resend revokes-and-recreates inside
+-- one transaction, so the constraint holds at every commit point.
+CREATE UNIQUE INDEX idx_org_invitation_live ON org_invitations (organization_id, email)
+    WHERE accepted_at IS NULL AND revoked_at IS NULL;
+
 CREATE TYPE point_type AS ENUM ('frontend_component', 'custom');
 CREATE TYPE point_status AS ENUM ('active', 'deprecated', 'archived');
 CREATE TYPE point_version_status AS ENUM ('active', 'deprecated', 'archived');
@@ -1161,9 +1186,17 @@ Access matrices (every cell from documented `CREATE POLICY` semantics; actor is 
 Two flow-level consequences, both documented as acceptance criteria: the **login transaction** reads
 `organization_memberships` (to pick the JWT's default org) before any preHandler ran, so it must
 call `set_config('app.current_user_id', ...)` manually right after the user upsert (see
-`use-cases/auth/magic-link-sign-in.md`); and the **invite flow** (review checklist 4.1, not yet
-designed) must re-check the memberships INSERT branches when it lands — inserting a row for
-*another* user relies on the active-org branch.
+`use-cases/auth/magic-link-sign-in.md`); and the **invite flow** (designed 2026-06-12) inserts
+memberships only as the *invitee* — `user_id = current user`, set by the redemption transaction's
+own `set_config` — so the user-id branch covers it with no policy change.
+
+**`org_invitations` policies** (2026-06-12)
+
+Three-plane policy: an admin org-id branch, an invitee email branch, and a capability-keyed
+redemption branch (`app.invite_code_hash`, set only inside the redemption transaction). The policy
+SQL, the near-immutability trigger, and the access matrix are colocated with the use case —
+`use-cases/orgs/invite-flow.md` (doc convention 2026-06-12: schema/policy detail lives with its use
+case; this file keeps the canonical DDL listing and pointers).
 
 **Service role**
 

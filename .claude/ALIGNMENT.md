@@ -17,6 +17,7 @@ No existing tool owns this space cleanly. Internal wikis go stale. Component lib
 - Domain-level access control — RLS is org-scoped; domain-level memberships are a future concern
 - Role-differentiated UI — all roles see the same interface
 - SDKs beyond TypeScript (Python, Ruby, Java, Rust, C++, etc. are post-MVP)
+- Domain-based auto-join (anyone@company.com self-joins a verified-domain org) — post-MVP; joining an org is invitation-only for now (2026-06-12)
 - Build system plugins (Vite, webpack, etc.) — deferred; no concrete use case yet
 
 ## Architectural constraints
@@ -41,9 +42,6 @@ No existing tool owns this space cleanly. Internal wikis go stale. Component lib
 - Security mechanisms (RLS policies, role grants, auth checks) are designed with an explicit **access matrix** — command (SELECT/INSERT/UPDATE/DELETE or equivalent) × actor/row class — with every cell filled from the mechanism's documented semantics, not from intent, before the design lands in a doc (2026-06-11)
 
 ## Open questions
-
-**Invite / org join flow**
-How does a user join an org? Options: admin sends an invite link, admin adds email directly, or user creates an org on first sign-in. Not yet designed.
 
 **Build system plugins**
 Whether to eventually build Vite/webpack/other plugins for deeper SDK integration. Deferred — no concrete use case yet.
