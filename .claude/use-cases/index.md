@@ -32,7 +32,7 @@ Fully spec out the health scores system. Checklist:
 
 ## orgs
 - [Create Organization](orgs/create-organization.md) — user creates a new org; assigned `owner` role automatically
-- [Invite Flow](orgs/invite-flow.md) — how a user joins an existing org *(deferred — open question)*
+- [Invite Flow](orgs/invite-flow.md) — admin invites an email with a role; consent-gated acceptance via invite link (signs in) or org-selection screen (2026-06-12)
 
 ## domains
 - [Create Domain](domains/create-domain.md) — org member creates a domain or sub-domain; sibling-scoped slug uniqueness

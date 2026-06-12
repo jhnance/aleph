@@ -29,8 +29,8 @@ A user submits their email and receives a magic link. Clicking the link authenti
 - Server issues a signed HS256 JWT with claims: `sub` = user_id, `exp` = now() + 30 days, `iat` = now(), `jti` = random UUID — identity only, no org claim (2026-06-11); written as a cookie with `HttpOnly; Secure; SameSite=Lax; Path=/` (2026-06-11 — `SameSite=Lax` is the CSRF mitigation; it assumes no GET endpoint mutates state under the cookie's authority. See `design/data-model.md`, *Session cookie attributes and CSRF*)
 - Post-authentication redirect behavior (driven by the memberships query above, not by any JWT claim):
   - exactly one membership: redirect directly to that org's landing page
-  - multiple memberships: redirect to the org-selection screen; picking one is plain navigation (see Org Switching)
-  - no memberships: redirect to the create-organization screen
+  - multiple memberships: redirect to the org-selection screen; picking one is plain navigation (see Org Switching). The screen also surfaces pending invitations for the user's email (see Invite Flow)
+  - no memberships: redirect to the create-organization screen, which also surfaces pending invitations — an invited first-time user should see "join Acme" next to "create your own org"
 - `auth_codes` rows are never deleted; `used_at` is the tombstone
   - Immediate deletion on redemption would erase the authentication audit trail. Garbage collection of expired rows (rows where `expires_at` is in the past) can be handled by a periodic background job without affecting correctness.
 - `POST /api/auth/magic-link` is rate-limited at the API layer — per email (e.g. max 3 link requests per 15-minute window) and per IP; throttled requests still return 200 with no email sent, preserving the anti-enumeration property above (added 2026-06-10 — without this, the endpoint is an unthrottled email-bombing vector)

@@ -138,9 +138,10 @@ Session outcome: per-command RLS policies on nullable-org tables; hybrid identit
 
 ## Phase 4 — Product surface: design sessions + filling the stubs
 
-- [s] **4.1 Invite flow — promote to designed use case** *(annotation #14)*
+- [x] **4.1 Invite flow — promote to designed use case** *(annotation #14)*
   > Quoted text: "Promote it from open question to designed use case."
   > Joshua: "Agreed; add it to a checklist."
+  Done (2026-06-12): consent-gated invitations reusing the magic-link machinery (Joshua's forks: invitation-only; explicit accept surfaced at sign-in; admin+ invites; inviter picks role, owner excluded; domain auto-join deferred post-MVP). `org_invitations` DDL + three-plane RLS policy (capability-keyed redemption branch) + access matrix in `data-model.md`; `invite-flow.md` fully specced; magic-link redirects surface pending invites; ALIGNMENT.md open question closed; decision logged in `decisions/2026-06-12.md`. Resolves the 3.2 memberships-INSERT follow-up (insert happens as the invitee — user-id branch).
 
 - [ ] **4.2 Read-path use cases** *(annotation #15)* — stubs created: `catalog/browse-catalog.md`, `catalog/point-detail.md`, `catalog/view-use-case.md`, `catalog/ecosystem-map.md`.
   > Quoted text: "There is no use case for browsing domains, listing points, a point detail page, viewing a use case's content, playing a demo_artifact_url, or any map/graph view"
