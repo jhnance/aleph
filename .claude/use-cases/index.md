@@ -22,6 +22,25 @@ Fully spec out the health scores system. Checklist:
 - [ ] Spec the **outdated dependencies** score (declared `package.json` ranges vs. latest published — Joshua to describe)
 - [ ] `health-score.md` / `evaluate-point-health.md` — reconcile and document
 
+### Declare dependencies
+Design the authoring path for declaring dependencies in `aleph.config.ts` and deriving dependents at runtime. Checklist:
+- [ ] Spec the package-manager cross-reference: how the CLI matches `package.json` dependencies against known Aleph points
+- [ ] Finalize the dependency declaration format in `aleph.config.ts` (explicit entries vs. inferred from lock file)
+- [ ] Clarify how dependents are derived at runtime (via the graph, not declared in config)
+- [ ] Complete `connections/declare-dependencies.md`
+
+### Props extraction
+Decide the ingestion mechanism for `frontend_component` prop manifests at publish time. Checklist:
+- [ ] Choose between react-docgen vs. TS compiler API; decide behavior when no extractor is configured
+- [ ] Decide whether props carry forward until redeclared or are re-extracted on every publish
+- [ ] Complete `sdk-cli/props-extraction.md`
+
+### Per-lineage search indexing
+Spec how Meilisearch is kept current as new versions are published. Checklist:
+- [ ] Spell out the per-lineage heads indexing strategy with a concrete example (what gets indexed, at what granularity)
+- [ ] Decide dual-write consistency: outbox pattern vs. periodic reconciliation re-index
+- [ ] Complete or create `search/search-indexing.md`
+
 ## auth
 - [Magic Link Sign-In](auth/magic-link-sign-in.md) — user submits email, clicks magic link, receives JWT session cookie
 - [Org Switching](auth/org-switching.md) — org switching is pure navigation (URL org is authoritative, 2026-06-11); `GET /api/auth/orgs` powers the picker
