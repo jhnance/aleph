@@ -5,41 +5,15 @@ related:
   - sdk-cli/aleph-scan.md
   - sdk-cli/aleph-config.md
   - sdk-cli/publish-workflow.md
+  - demos/define-use-case.md
+  - demos/render-function.md
 ---
 
 # Detecting Use Cases
 
 The CLI discovers `.aleph.ts` files co-located with source code and processes them during the publish workflow. Each `.aleph.ts` file defines one use case demo and its MSW mocks; the written description (title, content) lives in Aleph. The CLI matches discovered files against the committed `aleph.lock` file to determine what to publish.
 
-## `.aleph.ts` file format
-
-```typescript
-import { defineUseCase, http, HttpResponse } from '@aleph/demo-sdk'
-
-export default defineUseCase({
-  id: '0d4f9c2e-7b1a-4e2c-9c61-2f8e5a7d3b10', // stable UUID identifier — treat as immutable
-  title: 'Login Flow',         // display name — edited in the Aleph UI; pulled down via `aleph sync`
-  export: 'LoginButton',       // optional — scopes use case to a named export
-  demo: './LoginFlowDemo.tsx', // path to demo entry point (relative to this file)
-  handlers: [                  // MSW mock handlers for this demo
-    http.post('/api/auth/login', () =>
-      HttpResponse.json({ token: 'mock-token-123' })
-    )
-  ]
-})
-```
-
-For a frontend React component, the demo entry file (`LoginFlowDemo.tsx`) uses `@aleph/react` to mount the component:
-
-```typescript
-// LoginFlowDemo.tsx
-import { render } from '@aleph/react'
-import { LoginButton } from './LoginButton'
-
-export default render(() => (
-  <LoginButton onLogin={(email) => console.log('Login with', email)} />
-))
-```
+See `demos/define-use-case.md` for the `.aleph.ts` format and field semantics. See `demos/render-function.md` for the demo entry point format.
 
 ## Acceptance Criteria
 

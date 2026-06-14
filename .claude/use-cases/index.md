@@ -93,6 +93,10 @@ Spec how Meilisearch is kept current as new versions are published. Checklist:
 ## search
 - [Search and Discover](search/search-and-discover.md) — typo-tolerant full-text search across points, domains, and use cases via Meilisearch
 
+## demos
+- [`defineUseCase()`](demos/define-use-case.md) — `.aleph.ts` format and field semantics for declaring a use case demo in code *(stub)*
+- [`render()`](demos/render-function.md) — demo entry point format; default export expected by the CLI bundler *(stub)*
+
 ## sdk-cli
 - [`aleph.config.ts`](sdk-cli/aleph-config.md) — required root config: pointId, API/org, export entries, use case discovery globs; discovery only, use cases are files-only
 - [Publish Workflow](sdk-cli/publish-workflow.md) — end-to-end CLI publish flow: auth, preflight checks, detection, version assignment, demo artifact upload, commit
