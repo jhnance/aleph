@@ -63,6 +63,7 @@ Spec how Meilisearch is kept current as new versions are published. Checklist:
 - [Point Detail](catalog/point-detail.md) — aggregate single-point page anchored on the representative (latest-release) version
 - [View Use Case](catalog/view-use-case.md) — lineage-addressed page: content, edit history, per-version appearances, sandboxed live demos
 - [Ecosystem Map](catalog/ecosystem-map.md) — domain-scoped graph with boundary nodes; org-wide and neighborhood views deferred
+- [SSR Page Freshness](catalog/ssr-page-freshness.md) — catalog pages return fresh HTML after use case publish; `no-cache` + ETag + CDN purge strategy *(stub)*
 
 ## versioning
 - [Publish Point Version](versioning/publish-point-version.md) — SDK/CLI publishes a new version; assigns semantic + monotonic version, records use case attachments from the payload
