@@ -53,6 +53,7 @@ Spec how Meilisearch is kept current as new versions are published. Checklist:
 
 ## domains
 - [Create Domain](domains/create-domain.md) — org member creates a domain or sub-domain; sibling-scoped slug uniqueness
+- [Domain Contacts](domains/domain-contacts.md) — org admins designate members as points of contact for a domain; explicit per-domain, no subdomain cascade
 
 ## points
 - [Create Point](points/create-point.md) — org member creates a new point within a domain, specifying type and metadata
@@ -63,12 +64,21 @@ Spec how Meilisearch is kept current as new versions are published. Checklist:
 - [Point Detail](catalog/point-detail.md) — aggregate single-point page anchored on the representative (latest-release) version
 - [View Use Case](catalog/view-use-case.md) — lineage-addressed page: content, edit history, per-version appearances, sandboxed live demos
 - [Ecosystem Map](catalog/ecosystem-map.md) — domain-scoped graph with boundary nodes; org-wide and neighborhood views deferred
-- [SSR Page Freshness](catalog/ssr-page-freshness.md) — catalog pages return fresh HTML after use case publish; `no-cache` + ETag + CDN purge strategy *(stub)*
+- [SSR Page Freshness](catalog/ssr-page-freshness.md) — catalog pages return fresh HTML after use case publish; `no-cache` + content-ID ETag; 304 on cache hit
+
+## ssr
+- [Server-Rendered HTML](ssr/server-rendered-html.md) — every route returns fully rendered HTML; client hydrates without mismatch
+- [Unauthenticated Redirect](ssr/unauthenticated-redirect.md) — no/invalid/expired session cookie → 302 to `/login` before any HTML is rendered
+- [Org Membership Guard](ssr/org-membership-guard.md) — org-scoped routes reject non-members with 403 before rendering
+- [Login Page](ssr/login-page.md) — `/login` accessible without auth; authenticated users redirected to their org destination
+- [Loader Data Fetching](ssr/loader-data-fetching.md) — loaders call Fastify over HTTP, forward session cookie, render data in initial HTML
+- [Loader Error Handling](ssr/loader-error-handling.md) — Fastify errors (4xx/5xx/timeout/network) surface as typed error pages; server never crashes
 
 ## versioning
 - [Publish Point Version](versioning/publish-point-version.md) — SDK/CLI publishes a new version; assigns semantic + monotonic version, records use case attachments from the payload
 - [View Version History](versioning/view-version-history.md) — user views all published versions of a point in monotonic order
 - [Component Props Manifest](versioning/component-props-manifest.md) — immutable per-version prop manifest for `frontend_component` points (type, required, default, description)
+- [Release Tollgate](versioning/release-tollgate.md) — approval gate before a prerelease can be promoted to release *(stub)*
 
 ## use-case-management
 - [Draft Use Case](use-case-management/draft-use-case.md) — org member authors a draft use case (new or revision of existing)

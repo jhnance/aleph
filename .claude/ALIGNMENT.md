@@ -23,7 +23,10 @@ No existing tool owns this space cleanly. Internal wikis go stale. Component lib
 ## Architectural constraints
 
 - TypeScript throughout (ESM modules); package manager: pnpm
-- Frontend: React, Vite, Tailwind CSS — tests: Vitest + React Testing Library
+- Frontend: React, Vite, Tailwind CSS, React Router v7 (framework mode) — tests: Vitest + React Testing Library
+- All routes are SSR; the web app is a separate Node process (distinct from the Fastify API)
+- SSR loaders call the Fastify API over HTTP — the web server has no direct DB access; Fastify remains the single location for business logic
+- Auth: the JWT session cookie is forwarded to Fastify on each loader request; auth checks happen in loaders before any HTML is rendered (no flash of unauthorized content)
 - Backend: Fastify, Kysely + postgres.js (Postgres) — tests: Vitest
 - Infra: Docker, Kubernetes
 - Search: self-hosted Meilisearch
