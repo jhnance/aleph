@@ -53,6 +53,7 @@ Spec how Meilisearch is kept current as new versions are published. Checklist:
 
 ## domains
 - [Create Domain](domains/create-domain.md) — org member creates a domain or sub-domain; sibling-scoped slug uniqueness
+- [Domain Contacts](domains/domain-contacts.md) — org admins designate members as points of contact for a domain; explicit per-domain, no subdomain cascade
 
 ## points
 - [Create Point](points/create-point.md) — org member creates a new point within a domain, specifying type and metadata
@@ -69,6 +70,7 @@ Spec how Meilisearch is kept current as new versions are published. Checklist:
 - [Publish Point Version](versioning/publish-point-version.md) — SDK/CLI publishes a new version; assigns semantic + monotonic version, records use case attachments from the payload
 - [View Version History](versioning/view-version-history.md) — user views all published versions of a point in monotonic order
 - [Component Props Manifest](versioning/component-props-manifest.md) — immutable per-version prop manifest for `frontend_component` points (type, required, default, description)
+- [Release Tollgate](versioning/release-tollgate.md) — approval gate before a prerelease can be promoted to release *(stub)*
 
 ## use-case-management
 - [Draft Use Case](use-case-management/draft-use-case.md) — org member authors a draft use case (new or revision of existing)
