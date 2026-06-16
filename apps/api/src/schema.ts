@@ -187,6 +187,7 @@ interface PointExportsTable {
 interface PointVersionExportsTable {
   point_version_id: string  // FK → point_versions.id
   export_id:        string  // FK → point_exports.id
+  point_id:         string  // FK → points.id
   organization_id:  string  // FK → organizations.id
   created_at:       Generated<Date>
 }

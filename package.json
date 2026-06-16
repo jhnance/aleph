@@ -12,5 +12,8 @@
     "dev:web": "pnpm --filter @aleph/web dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test"
+  },
+  "devDependencies": {
+    "prettier": "^3.8.4"
   }
 }
