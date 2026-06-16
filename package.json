@@ -1,9 +1,16 @@
 {
   "name": "aleph",
   "version": "0.0.0-pre_alpha.0",
+  "private": true,
   "description": "Aleph is a cataloguing and discovery tool for your ecosystem.",
-  "scripts": {},
   "author": "Joshua Nance",
   "license": "UNLICENSED",
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @aleph/api --filter @aleph/web dev",
+    "dev:api": "pnpm --filter @aleph/api dev",
+    "dev:web": "pnpm --filter @aleph/web dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test"
+  }
 }
