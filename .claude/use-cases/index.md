@@ -41,6 +41,9 @@ Spec how Meilisearch is kept current as new versions are published. Checklist:
 - [ ] Decide dual-write consistency: outbox pattern vs. periodic reconciliation re-index
 - [ ] Complete or create `search/search-indexing.md`
 
+### MCP server
+Design an MCP server for agents to connect to Aleph.
+
 ## auth
 - [Magic Link Sign-In](auth/magic-link-sign-in.md) — user submits email, clicks magic link, receives JWT session cookie
 - [Org Switching](auth/org-switching.md) — org switching is pure navigation (URL org is authoritative, 2026-06-11); `GET /api/auth/orgs` powers the picker
